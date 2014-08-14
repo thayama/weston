@@ -566,6 +566,7 @@ usage(int error_code)
 		"  --seat=SEAT\t\tThe seat that weston should run on\n"
 		"  --tty=TTY\t\tThe tty to use\n"
 		"  --use-pixman\t\tUse the pixman (CPU) renderer\n"
+		"  --use-v4l2\t\tUse the v4l2 renderer\n"
 		"  --current-mode\tPrefer current KMS mode over EDID preferred mode\n\n");
 #endif
 
@@ -1217,7 +1218,7 @@ load_drm_backend(struct weston_compositor *c,
 	struct weston_drm_backend_config config = {{ 0, }};
 	struct weston_config_section *section;
 	struct wet_compositor *wet = to_wet_compositor(c);
-	int ret = 0;
+	int is_enable, ret = 0;
 
 	wet->drm_use_current_mode = false;
 
@@ -1227,6 +1228,7 @@ load_drm_backend(struct weston_compositor *c,
 		{ WESTON_OPTION_INTEGER, "tty", 0, &config.tty },
 		{ WESTON_OPTION_BOOLEAN, "current-mode", 0, &wet->drm_use_current_mode },
 		{ WESTON_OPTION_BOOLEAN, "use-pixman", 0, &config.use_pixman },
+		{ WESTON_OPTION_BOOLEAN, "use-v4l2", 0, &config.use_v4l2 },
 	};
 
 	parse_options(options, ARRAY_LENGTH(options), argc, argv);
@@ -1235,6 +1237,29 @@ load_drm_backend(struct weston_compositor *c,
 	weston_config_section_get_string(section,
 					 "gbm-format", &config.gbm_format,
 					 NULL);
+
+	/* for v4l2 renderer */
+	section = weston_config_get_section(wc, "v4l2-renderer", NULL, NULL);
+	weston_config_section_get_string(section, "device",
+					 &config.v4l2ops.device, "/dev/media0");
+	weston_config_section_get_string(section, "device-module",
+					 &config.v4l2ops.device_module, NULL);
+	weston_config_section_get_bool(section, "gl-fallback", &is_enable,
+				       false);
+	config.v4l2ops.gl_fallback = is_enable;
+	weston_config_section_get_bool(section, "defer-attach", &is_enable,
+				       false);
+	config.v4l2ops.defer_attach = is_enable;
+	section = weston_config_get_section(wc, "vsp-renderer", NULL, NULL);
+	weston_config_section_get_int(section, "max_inputs",
+				      &config.v4l2ops.max_inputs, -1);
+	weston_config_section_get_int(section, "max_views_to_compose",
+				      &config.v4l2ops.max_compose, -1);
+	weston_config_section_get_string(section, "vspi-device",
+					 &config.v4l2ops.scaler_device, NULL);
+	weston_config_section_get_bool(section, "vsp-scaler", &is_enable,
+				       false);
+	config.v4l2ops.scaler_enable = is_enable;
 
 	config.base.struct_version = WESTON_DRM_BACKEND_CONFIG_VERSION;
 	config.base.struct_size = sizeof(struct weston_drm_backend_config);
@@ -1245,6 +1270,11 @@ load_drm_backend(struct weston_compositor *c,
 
 	wet_set_pending_output_handler(c, drm_backend_output_configure);
 
+	if (config.v4l2ops.scaler_device)
+		free(config.v4l2ops.scaler_device);
+	if (config.v4l2ops.device_module)
+		free(config.v4l2ops.device_module);
+	free(config.v4l2ops.device);
 	free(config.gbm_format);
 	free(config.seat_id);
 

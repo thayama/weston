@@ -110,6 +110,22 @@ struct weston_drm_backend_config {
 	/** Whether to use the pixman renderer instead of the OpenGL ES renderer. */
 	bool use_pixman;
 
+	/** Whether to use the v4l2 renderer insted of the OpenGL ES renderer. */
+	bool use_v4l2;
+
+	/** Options of the v4l2 renderer. */
+	struct {
+		char *device;
+		char *device_module;
+		bool gl_fallback;
+		bool defer_attach;
+		/* for backend */
+		int max_inputs;
+		int max_compose;
+		char *scaler_device;
+		bool scaler_enable;
+	} v4l2ops;
+
 	/** The seat to be used for input and output.
 	 *
 	 * If NULL the default "seat0" will be used.  The backend will
