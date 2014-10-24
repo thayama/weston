@@ -27,6 +27,11 @@
 
 #include "compositor.h"
 
+/*
+ * Enable gl-fallback feature.
+ */
+#define V4L2_GL_FALLBACK
+
 struct v4l2_renderer_device {
 	struct media_device *media;
 	const char *device_name;
@@ -67,6 +72,10 @@ struct v4l2_surface_state {
 	struct wl_listener buffer_destroy_listener;
 	struct wl_listener surface_destroy_listener;
 	struct wl_listener renderer_destroy_listener;
+
+#ifdef V4L2_GL_FALLBACK
+	void *gl_renderer_state;
+#endif
 };
 
 struct v4l2_device_interface {
@@ -81,6 +90,9 @@ struct v4l2_device_interface {
 	void (*begin_compose)(struct v4l2_renderer_device *dev, struct v4l2_renderer_output *out);
 	void (*finish_compose)(struct v4l2_renderer_device *dev);
 	int (*draw_view)(struct v4l2_renderer_device *dev, struct v4l2_surface_state *vs);
+#ifdef V4L2_GL_FALLBACK
+	int (*can_compose)(struct v4l2_surface_state *vs);
+#endif
 
 	uint32_t (*get_capabilities)(void);
 };
