@@ -1321,18 +1321,17 @@ surface_state_destroy(struct gl_surface_state *gs, struct gl_renderer *gr)
 	free(gs);
 }
 
+static struct gl_renderer *__gr;
+
 static void
 surface_state_handle_surface_destroy(struct wl_listener *listener, void *data)
 {
 	struct gl_surface_state *gs;
-	struct gl_renderer *gr;
 
 	gs = container_of(listener, struct gl_surface_state,
 			  surface_destroy_listener);
 
-	gr = get_renderer(gs->surface->compositor);
-
-	surface_state_destroy(gs, gr);
+	surface_state_destroy(gs, __gr);
 }
 
 static void
@@ -1952,6 +1951,8 @@ gl_renderer_create(struct weston_compositor *ec, EGLNativeDisplayType display,
 	ec->renderer = &gr->base;
 	ec->capabilities |= WESTON_CAP_ROTATION_ANY;
 	ec->capabilities |= WESTON_CAP_CAPTURE_YFLIP;
+
+	__gr = gr;
 
 	if (gl_renderer_setup_egl_extensions(ec) < 0)
 		goto err_egl;
