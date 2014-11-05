@@ -47,6 +47,13 @@ struct v4l2_renderer_plane {
 	unsigned int stride;
 };
 
+#ifdef V4L2_GL_FALLBACK
+typedef enum {
+	V4L2_SURFACE_DEFAULT,
+	V4L2_SURFACE_GL_ATTACHED
+} v4l2_surface_t;
+#endif
+
 struct v4l2_surface_state {
 	struct weston_surface *surface;
 	struct weston_buffer_reference buffer_ref;
@@ -75,6 +82,11 @@ struct v4l2_surface_state {
 
 #ifdef V4L2_GL_FALLBACK
 	void *gl_renderer_state;
+
+	v4l2_surface_t surface_type;
+
+	struct wl_listener surface_post_destroy_listener;
+	struct wl_listener renderer_post_destroy_listener;
 #endif
 };
 

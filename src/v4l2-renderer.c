@@ -228,6 +228,36 @@ v4l2_gl_flush_damage(struct weston_surface *surface)
 }
 
 static void
+v4l2_gl_surface_cleanup(struct v4l2_surface_state *vs)
+{
+	wl_list_remove(&vs->surface_post_destroy_listener.link);
+	wl_list_remove(&vs->renderer_post_destroy_listener.link);
+
+	vs->surface->compositor->renderer = &vs->renderer->base;
+	vs->surface->renderer_state = NULL;
+
+	free(vs);
+}
+
+static void
+v4l2_gl_surface_post_destroy(struct wl_listener *listener, void *data)
+{
+	struct v4l2_surface_state *vs;
+	vs = container_of(listener, struct v4l2_surface_state,
+			  surface_post_destroy_listener);
+	v4l2_gl_surface_cleanup(vs);
+}
+
+static void
+v4l2_gl_renderer_post_destroy(struct wl_listener *listener, void *data)
+{
+	struct v4l2_surface_state *vs;
+	vs = container_of(listener, struct v4l2_surface_state,
+			  renderer_post_destroy_listener);
+	v4l2_gl_surface_cleanup(vs);
+}
+
+static void
 v4l2_gl_attach(struct weston_surface *surface, struct weston_buffer *buffer)
 {
 	struct v4l2_surface_state *vs = get_surface_state(surface);
@@ -241,6 +271,16 @@ v4l2_gl_attach(struct weston_surface *surface, struct weston_buffer *buffer)
 	vs->gl_renderer_state = surface->renderer_state;
 	surface->renderer_state = vs;
 	surface->compositor->renderer = &renderer->base;
+
+	if (vs->surface_type != V4L2_SURFACE_GL_ATTACHED) {
+		vs->surface_post_destroy_listener.notify = v4l2_gl_surface_post_destroy;
+		wl_signal_add(&surface->destroy_signal, &vs->surface_post_destroy_listener);
+
+		vs->renderer_post_destroy_listener.notify = v4l2_gl_renderer_post_destroy;
+		wl_signal_add(&renderer->destroy_signal, &vs->renderer_post_destroy_listener);
+
+		vs->surface_type = V4L2_SURFACE_GL_ATTACHED;
+	}
 }
 
 #define MAX_VIEW_COUNT	256
@@ -869,12 +909,20 @@ v4l2_renderer_surface_state_destroy(struct v4l2_surface_state *vs)
 		vs->buffer_destroy_listener.notify = NULL;
 	}
 
-	vs->surface->renderer_state = NULL;
-
 	// TODO: Release any resources associated to the surface here.
 
 	weston_buffer_reference(&vs->buffer_ref, NULL);
-	free(vs);
+#ifdef V4L2_GL_FALLBACK
+	if (vs->surface_type == V4L2_SURFACE_GL_ATTACHED) {
+		vs->surface->compositor->renderer = vs->renderer->gl_renderer;
+		vs->surface->renderer_state = vs->gl_renderer_state;
+	} else {
+#endif
+		vs->surface->renderer_state = NULL;
+		free(vs);
+#ifdef V4L2_GL_FALLBACK
+	}
+#endif
 }
 
 static void
@@ -924,6 +972,9 @@ v4l2_renderer_create_surface(struct weston_surface *surface)
 	wl_signal_add(&vr->destroy_signal,
 		      &vs->renderer_destroy_listener);
 
+#ifdef V4L2_GL_FALLBACK
+	vs->surface_type = V4L2_SURFACE_DEFAULT;
+#endif
 	return 0;
 }
 
