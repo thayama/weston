@@ -1324,7 +1324,7 @@ v4l2_renderer_init(struct weston_compositor *ec, int drm_fd, char *drm_fn)
 					    "media-ctl", NULL, NULL);
 	weston_config_section_get_string(section, "device", &device, "/dev/media0");
 #ifdef V4L2_GL_FALLBACK
-	weston_config_section_get_bool(section, "gl-fallback", &renderer->gl_fallback, 1);
+	weston_config_section_get_bool(section, "gl-fallback", &renderer->gl_fallback, 0);
 #endif
 
 	/* Initialize V4L2 media controller */
