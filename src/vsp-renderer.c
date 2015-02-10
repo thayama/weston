@@ -1083,14 +1083,22 @@ vsp_set_output_buffer(struct v4l2_renderer_output *out, struct v4l2_bo_state *bo
 
 #ifdef V4L2_GL_FALLBACK
 static int
-vsp_can_compose(struct v4l2_surface_state *vs)
+vsp_can_compose(struct weston_view *ev, struct v4l2_surface_state *vs)
 {
-	switch(vs->pixel_format) {
-	case V4L2_PIX_FMT_ABGR32:
-		if (vs->alpha != 1.0)
-			return 0;
+	pixman_region32_t surface_blend;
+	int can_compose = 1;
+
+	if (vs->pixel_format == V4L2_PIX_FMT_ABGR32 && ev->alpha != 1.0) {
+		pixman_region32_init_rect(&surface_blend, 0, 0,
+					  ev->surface->width, ev->surface->height);
+		pixman_region32_subtract(&surface_blend, &surface_blend, &ev->surface->opaque);
+
+		if (pixman_region32_not_empty(&surface_blend))
+			can_compose = 0;
+
+		pixman_region32_fini(&surface_blend);
 	}
-	return 1;
+	return can_compose;
 }
 #endif
 
