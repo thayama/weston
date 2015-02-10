@@ -969,8 +969,23 @@ v4l2_renderer_attach_dmabuf(struct v4l2_surface_state *vs, struct weston_buffer 
 		bpp = 4;
 		break;
 
+	case WL_KMS_FORMAT_XBGR8888:
+		pixel_format = V4L2_PIX_FMT_XRGB32;
+		bpp = 4;
+		break;
+
+	case WL_KMS_FORMAT_ABGR8888:
+		pixel_format = V4L2_PIX_FMT_ARGB32;
+		bpp = 4;
+		break;
+
 	case WL_KMS_FORMAT_RGB888:
 		pixel_format = V4L2_PIX_FMT_RGB24;
+		bpp = 3;
+		break;
+
+	case WL_KMS_FORMAT_BGR888:
+		pixel_format = V4L2_PIX_FMT_BGR24;
 		bpp = 3;
 		break;
 
@@ -979,8 +994,18 @@ v4l2_renderer_attach_dmabuf(struct v4l2_surface_state *vs, struct weston_buffer 
 		bpp = 2;
 		break;
 
+	case WL_KMS_FORMAT_RGB332:
+		pixel_format = V4L2_PIX_FMT_RGB332;
+		bpp = 1;
+		break;
+
 	case WL_KMS_FORMAT_YUYV:
 		pixel_format = V4L2_PIX_FMT_YUYV;
+		bpp = 2;
+		break;
+
+	case WL_KMS_FORMAT_YVYU:
+		pixel_format = V4L2_PIX_FMT_YVYU;
 		bpp = 2;
 		break;
 
@@ -1006,6 +1031,11 @@ v4l2_renderer_attach_dmabuf(struct v4l2_surface_state *vs, struct weston_buffer 
 
 	case WL_KMS_FORMAT_NV61:
 		pixel_format = V4L2_PIX_FMT_NV61M;
+		bpp = 2;
+		break;
+
+	case WL_KMS_FORMAT_YUV420:
+		pixel_format = V4L2_PIX_FMT_YUV420M;
 		bpp = 2;
 		break;
 
