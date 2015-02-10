@@ -712,8 +712,7 @@ can_repaint(struct weston_compositor *c)
 	 */
 	wl_list_for_each(ev, &c->view_list, link) {
 		struct v4l2_surface_state *vs = get_surface_state(ev->surface);
-		vs->alpha = ev->alpha;
-		if (!device_interface->can_compose(vs))
+		if (!device_interface->can_compose(ev, vs))
 			return 0;
 	}
 	DBG("%s: can do with vsp-renderer...\n", __func__);
