@@ -189,17 +189,25 @@ v4l2_init_gl_output(struct weston_output *output, struct v4l2_renderer *renderer
 {
 	EGLint format = GBM_FORMAT_XRGB8888;
 	struct v4l2_output_state *state = output->renderer_state;
+	int i;
 
 	state->gbm_surface = gbm_surface_create(renderer->gbm,
 						output->current_mode->width,
 						output->current_mode->height,
 						format,
 						GBM_BO_USE_SCANOUT |
-						GBM_BO_USE_RENDERING);
+						GBM_BO_USE_RENDERING |
+						GBM_BO_CREATE_EMPTY);
 
 	if (!state->gbm_surface) {
 		weston_log("%s: failed to create gbm surface\n", __func__);
 		return -1;
+	}
+
+	for (i = 0; i < 2; i++) {
+		int n = i % state->bo_count;
+		gbm_kms_set_bo((struct gbm_kms_surface *)state->gbm_surface,
+			       n, state->bo[n].map, state->bo[n].stride);
 	}
 
 	output->compositor->renderer = renderer->gl_renderer;
@@ -747,21 +755,9 @@ v4l2_renderer_repaint_output(struct weston_output *output,
 		wl_signal_emit(&output->frame_signal, output);
 #ifdef V4L2_GL_FALLBACK
 	} else {
-		struct gbm_kms_bo *bo;
-		int h, offset;
+		gbm_kms_set_front((struct gbm_kms_surface *)vo->gbm_surface, (!vo->bo_index));
 
 		v4l2_gl_repaint(output, output_damage);
-
-		bo = (struct gbm_kms_bo*)gbm_surface_lock_front_buffer(vo->gbm_surface);
-		if (!bo) {
-			weston_log("failed to lock front buffer: %m.\n");
-			return;
-		}
-		for (h = offset = 0; h < output->current_mode->height; h++) {
-			memcpy(vo->map + offset, bo->addr + offset, bo->base.stride);
-			offset += bo->base.stride;
-		}
-		gbm_surface_release_buffer(vo->gbm_surface, (struct gbm_bo*)bo);
 	}
 #endif
 
