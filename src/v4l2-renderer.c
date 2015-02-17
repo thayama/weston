@@ -81,7 +81,6 @@ struct v4l2_output_state {
 	uint32_t stride;
 	void *map;
 #ifdef V4L2_GL_FALLBACK
-	int dmafd;
 	void *gl_renderer_state;
 	struct gbm_surface *gbm_surface;
 #endif
@@ -1412,9 +1411,6 @@ v4l2_renderer_output_set_buffer(struct weston_output *output, struct v4l2_bo_sta
 
 	vo->stride = bo->stride;
 	vo->map = bo->map;
-#ifdef V4L2_GL_FALLBACK
-	vo->dmafd = bo->dmafd;
-#endif
 
 	device_interface->set_output_buffer(vo->output, bo);
 	return;
