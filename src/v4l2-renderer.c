@@ -297,8 +297,6 @@ v4l2_gl_attach(struct weston_surface *surface, struct weston_buffer *buffer)
 	}
 }
 
-#define MAX_VIEW_COUNT	256
-
 static void
 v4l2_gl_repaint(struct weston_output *output,
 		pixman_region32_t *output_damage)
@@ -307,8 +305,27 @@ v4l2_gl_repaint(struct weston_output *output,
 	struct v4l2_renderer *renderer = get_renderer(ec);
 	struct v4l2_output_state *state = output->renderer_state;;
 	struct weston_view *ev;
-	int view_count;
-	void *stack[MAX_VIEW_COUNT];
+	int view_count, length;
+	static void **stack = NULL;
+	static int stack_size = 0;
+
+	length = wl_list_length(&ec->view_list);
+	if (stack_size < length)
+		length += 8;
+	else if (stack_size / 2 > length)
+		length = (stack_size / 2) + 1;
+	else
+		length = 0;
+
+	if (length) {
+		if (stack)
+			free(stack);
+		if (!(stack = malloc(sizeof(void *) * length))) {
+			weston_log("can't allocate memory for a stack. can't continue.\n");
+			return;
+		}
+		stack_size = length;
+	}
 
 	view_count = 0;
 	wl_list_for_each(ev, &ec->view_list, link) {
