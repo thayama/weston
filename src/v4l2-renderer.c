@@ -190,6 +190,7 @@ v4l2_init_gl_output(struct weston_output *output, struct v4l2_renderer *renderer
 	EGLint format = GBM_FORMAT_XRGB8888;
 	struct v4l2_output_state *state = output->renderer_state;
 	int i;
+	pixman_format_code_t read_format;
 
 	state->gbm_surface = gbm_surface_create(renderer->gbm,
 						output->current_mode->width,
@@ -212,12 +213,14 @@ v4l2_init_gl_output(struct weston_output *output, struct v4l2_renderer *renderer
 
 	output->compositor->renderer = renderer->gl_renderer;
 	output->renderer_state = NULL;
+	read_format = output->compositor->read_format;
 	if (gl_renderer->output_create(output, state->gbm_surface,
 				       gl_renderer->opaque_attribs, &format) < 0) {
 		weston_log("%s: failed to create gl renderer output state\n", __func__);
 		gbm_surface_destroy(state->gbm_surface);
 		return -1;
 	}
+	output->compositor->read_format = read_format;
 	state->gl_renderer_state = output->renderer_state;
 	output->renderer_state = state;
 	output->compositor->renderer = &renderer->base;
@@ -364,6 +367,19 @@ v4l2_renderer_read_pixels(struct weston_output *output,
 	default:
 		return -1;
 	}
+
+#ifdef V4L2_GL_FALLBACK
+	if (output->compositor->capabilities & WESTON_CAP_CAPTURE_YFLIP) {
+		src = bo->map + x * 4 + y * bo->stride;
+		dst = pixels + len * (height - 1);
+		for (v = y; v < height; v++) {
+			memcpy(dst, src, len);
+			src += bo->stride;
+			dst -= len;
+		}
+		return 0;
+	}
+#endif
 
 	if (x == 0 && y == 0 &&
 	    width == (uint32_t)output->current_mode->width &&
