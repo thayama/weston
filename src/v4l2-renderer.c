@@ -741,23 +741,37 @@ repaint_surfaces(struct weston_output *output, pixman_region32_t *damage)
 
 #ifdef V4L2_GL_FALLBACK
 static int
-can_repaint(struct weston_compositor *c)
+can_repaint(struct weston_compositor *c, pixman_region32_t *output_region)
 {
 	struct weston_view *ev;
+	pixman_region32_t region;
+	int need_repaint;
 
 	DBG("%s: checking...\n", __func__);
 
 	/* we don't bother checking, if can_compose is not defined */
 	if (!device_interface->can_compose)
 		return 1;
-	/*
-	 * TODO: we may want to perform this walk-through in the v4l2_renderer_device
-	 * to optimize the call.
-	 */
+
 	wl_list_for_each(ev, &c->view_list, link) {
-		struct v4l2_surface_state *vs = get_surface_state(ev->surface);
-		if (!device_interface->can_compose(ev, vs))
-			return 0;
+		/* in the primary plane? */
+		if (ev->plane != &c->primary_plane)
+			continue;
+
+		/* a surface in the repaint area? */
+		pixman_region32_init(&region);
+		pixman_region32_intersect(&region,
+					  &ev->transform.boundingbox,
+					  output_region);
+		pixman_region32_subtract(&region, &region, &ev->clip);
+		need_repaint = pixman_region32_not_empty(&region);
+		pixman_region32_fini(&region);
+
+		if (need_repaint) {
+			struct v4l2_surface_state *vs = get_surface_state(ev->surface);
+			if (!device_interface->can_compose(ev, vs))
+				return 0;
+		}
 	}
 	DBG("%s: can do with vsp-renderer...\n", __func__);
 	return 1;
@@ -776,7 +790,7 @@ v4l2_renderer_repaint_output(struct weston_output *output,
 	DBG("%s\n", __func__);
 
 #ifdef V4L2_GL_FALLBACK
-	if ((!renderer->gl_fallback) || (can_repaint(output->compositor))) {
+	if ((!renderer->gl_fallback) || (can_repaint(output->compositor, &output->region))) {
 #endif
 		// render all views
 		repaint_surfaces(output, output_damage);
