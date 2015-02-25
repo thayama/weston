@@ -300,6 +300,38 @@ v4l2_gl_attach(struct weston_surface *surface, struct weston_buffer *buffer)
 	}
 }
 
+struct stack {
+	int stack_size;
+	int element_size;
+	void *stack;
+};
+
+#define V4L2_STACK_INIT(size) { .stack_size = 0, .element_size = (size), .stack = NULL }
+
+static int
+v4l2_stack_realloc(struct stack *stack, int target_size)
+{
+	if (target_size > stack->stack_size)
+		target_size += 8;
+	else if (target_size < stack->stack_size / 2)
+		target_size = stack->stack_size / 2 + 1;
+	else
+		target_size = 0;
+
+	if (target_size) {
+		stack->stack = realloc(stack->stack, target_size * stack->element_size);
+
+		if (!stack->stack) {
+			weston_log("can't allocate memory for a stack. can't continue.\n");
+			return -1;
+		}
+
+		stack->stack_size = target_size;
+	}
+
+	return 0;
+}
+
 static void
 v4l2_gl_repaint(struct weston_output *output,
 		pixman_region32_t *output_damage)
@@ -308,27 +340,13 @@ v4l2_gl_repaint(struct weston_output *output,
 	struct v4l2_renderer *renderer = get_renderer(ec);
 	struct v4l2_output_state *state = output->renderer_state;;
 	struct weston_view *ev;
-	int view_count, length;
-	static void **stack = NULL;
-	static int stack_size = 0;
+	int view_count;
+	static struct stack stacker = V4L2_STACK_INIT(sizeof(void *));
+	void **stack;
 
-	length = wl_list_length(&ec->view_list);
-	if (stack_size < length)
-		length += 8;
-	else if (stack_size / 2 > length)
-		length = (stack_size / 2) + 1;
-	else
-		length = 0;
-
-	if (length) {
-		if (stack)
-			free(stack);
-		if (!(stack = malloc(sizeof(void *) * length))) {
-			weston_log("can't allocate memory for a stack. can't continue.\n");
-			return;
-		}
-		stack_size = length;
-	}
+	if (v4l2_stack_realloc(&stacker, wl_list_length(&ec->view_list)) < 0)
+		return;
+	stack = (void**)stacker.stack;
 
 	view_count = 0;
 	wl_list_for_each(ev, &ec->view_list, link) {
