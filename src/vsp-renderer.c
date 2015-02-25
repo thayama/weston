@@ -1102,21 +1102,27 @@ vsp_set_output_buffer(struct v4l2_renderer_output *out, struct v4l2_bo_state *bo
 
 #ifdef V4L2_GL_FALLBACK
 static int
-vsp_can_compose(struct weston_view *ev, struct v4l2_surface_state *vs)
+vsp_can_compose(struct v4l2_view *view_list, int count)
 {
 	pixman_region32_t surface_blend;
-	int can_compose = 1;
+	int i, can_compose = 1;
 
-	if (vs->pixel_format == V4L2_PIX_FMT_ABGR32 && ev->alpha != 1.0) {
-		pixman_region32_init_rect(&surface_blend, 0, 0,
-					  ev->surface->width, ev->surface->height);
-		pixman_region32_subtract(&surface_blend, &surface_blend, &ev->surface->opaque);
+	for (i = 0; (can_compose) && (i < count); i++) {
+		struct weston_view *ev = view_list[i].view;
+		struct v4l2_surface_state *vs = view_list[i].state;
 
-		if (pixman_region32_not_empty(&surface_blend))
-			can_compose = 0;
+		if (vs->pixel_format == V4L2_PIX_FMT_ABGR32 && ev->alpha != 1.0) {
+			pixman_region32_init_rect(&surface_blend, 0, 0,
+						  ev->surface->width, ev->surface->height);
+			pixman_region32_subtract(&surface_blend, &surface_blend, &ev->surface->opaque);
 
-		pixman_region32_fini(&surface_blend);
+			if (pixman_region32_not_empty(&surface_blend))
+				can_compose = 0;
+
+			pixman_region32_fini(&surface_blend);
+		}
 	}
+
 	return can_compose;
 }
 #endif
