@@ -204,6 +204,10 @@ struct vsp_device {
 	struct vsp_output output;
 };
 
+#ifdef V4L2_GL_FALLBACK
+static int max_views_to_compose = -1;
+#endif
+
 static void
 video_debug_mediactl(void)
 {
@@ -299,6 +303,9 @@ vsp_init(struct media_device *media, struct weston_config *config)
 	section = weston_config_get_section(config,
 					    "vsp-renderer", NULL, NULL);
 	weston_config_section_get_int(section, "max_inputs", &vsp->input_max, VSP_INPUT_MAX);
+#ifdef V4L2_GL_FALLBACK
+	weston_config_section_get_int(section, "max_views_to_compose", &max_views_to_compose, -1);
+#endif
 
 	if (vsp->input_max < 2)
 		vsp->input_max = 2;
@@ -1107,6 +1114,11 @@ vsp_can_compose(struct v4l2_view *view_list, int count)
 	pixman_region32_t surface_blend;
 	int i, can_compose = 1;
 
+	if (max_views_to_compose > 0 && max_views_to_compose < count) {
+		can_compose = 0;
+		goto out;
+	}
+
 	for (i = 0; (can_compose) && (i < count); i++) {
 		struct weston_view *ev = view_list[i].view;
 		struct v4l2_surface_state *vs = view_list[i].state;
@@ -1123,6 +1135,7 @@ vsp_can_compose(struct v4l2_view *view_list, int count)
 		}
 	}
 
+out:
 	return can_compose;
 }
 #endif
