@@ -52,6 +52,11 @@ typedef enum {
 	V4L2_SURFACE_DEFAULT,
 	V4L2_SURFACE_GL_ATTACHED
 } v4l2_surface_t;
+
+struct v4l2_view {
+	struct weston_view *view;
+	struct v4l2_surface_state *state;
+};
 #endif
 
 struct v4l2_surface_state {
@@ -106,7 +111,7 @@ struct v4l2_device_interface {
 	void (*finish_compose)(struct v4l2_renderer_device *dev);
 	int (*draw_view)(struct v4l2_renderer_device *dev, struct v4l2_surface_state *vs);
 #ifdef V4L2_GL_FALLBACK
-	int (*can_compose)(struct weston_view *ev, struct v4l2_surface_state *vs);
+	int (*can_compose)(struct v4l2_view *view_list, int count);
 #endif
 
 	uint32_t (*get_capabilities)(void);

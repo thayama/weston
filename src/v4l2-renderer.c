@@ -764,7 +764,9 @@ can_repaint(struct weston_compositor *c, pixman_region32_t *output_region)
 {
 	struct weston_view *ev;
 	pixman_region32_t region;
-	int need_repaint;
+	int need_repaint, view_count;
+	static struct stack stacker = V4L2_STACK_INIT(sizeof(struct v4l2_view));
+	struct v4l2_view *view_list;
 
 	DBG("%s: checking...\n", __func__);
 
@@ -772,6 +774,12 @@ can_repaint(struct weston_compositor *c, pixman_region32_t *output_region)
 	if (!device_interface->can_compose)
 		return 1;
 
+	/* if stack realloc fails, there's not many things we can do... */
+	if (v4l2_stack_realloc(&stacker, wl_list_length(&c->view_list)) < 0)
+		return 1;
+	view_list = (struct v4l2_view *)stacker.stack;
+
+	view_count = 0;
 	wl_list_for_each(ev, &c->view_list, link) {
 		/* in the primary plane? */
 		if (ev->plane != &c->primary_plane)
@@ -788,12 +796,13 @@ can_repaint(struct weston_compositor *c, pixman_region32_t *output_region)
 
 		if (need_repaint) {
 			struct v4l2_surface_state *vs = get_surface_state(ev->surface);
-			if (!device_interface->can_compose(ev, vs))
-				return 0;
+			view_list[view_count].view = ev;
+			view_list[view_count].state = vs;
+			view_count++;
 		}
 	}
-	DBG("%s: can do with vsp-renderer...\n", __func__);
-	return 1;
+
+	return device_interface->can_compose(view_list, view_count);
 }
 #endif
 
