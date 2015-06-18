@@ -230,6 +230,18 @@ v4l2_init_gl_output(struct weston_output *output, struct v4l2_renderer *renderer
 }
 
 static void
+v4l2_gl_output_destroy(struct weston_output *output,
+		       struct v4l2_renderer *renderer)
+{
+	struct v4l2_output_state *state = output->renderer_state;
+	output->compositor->renderer = renderer->gl_renderer;
+	output->renderer_state = state->gl_renderer_state;
+	gl_renderer->output_destroy(output);
+	output->renderer_state = state;
+	output->compositor->renderer = &renderer->base;
+}
+
+static void
 v4l2_gl_flush_damage(struct weston_surface *surface)
 {
 	struct v4l2_surface_state *vs = get_surface_state(surface);
@@ -1538,6 +1550,15 @@ static void
 v4l2_renderer_output_destroy(struct weston_output *output)
 {
 	struct v4l2_output_state *vo = get_output_state(output);
+
+#ifdef V4L2_GL_FALLBACK
+	struct v4l2_renderer *renderer =
+		(struct v4l2_renderer*)output->compositor->renderer;
+
+	if (renderer->gl_fallback)
+		v4l2_gl_output_destroy(output, renderer);
+#endif
+
 	if (vo->bo)
 		free(vo->bo);
 	free(vo);
