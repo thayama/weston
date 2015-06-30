@@ -514,7 +514,7 @@ fi
 
 PKG_CHECK_MODULES(WAYLAND_SCANNER, wayland-scanner)
 
-AC_CONFIG_FILES([Makefile src/version.h src/weston.pc])
+AC_CONFIG_FILES([Makefile src/media-ctl/Makefile src/version.h src/weston.pc])
 
 AM_CONDITIONAL([HAVE_GIT_REPO], [test -f $srcdir/.git/logs/HEAD])
 
