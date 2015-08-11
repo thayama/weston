@@ -189,7 +189,7 @@ static int
 v4l2_init_gl_output(struct weston_output *output, struct v4l2_renderer *renderer)
 {
 	EGLint format = GBM_FORMAT_XRGB8888;
-	struct v4l2_output_state *state = output->renderer_state;
+	struct v4l2_output_state *state = get_output_state(output);
 	int i;
 	pixman_format_code_t read_format;
 
@@ -233,7 +233,7 @@ static void
 v4l2_gl_output_destroy(struct weston_output *output,
 		       struct v4l2_renderer *renderer)
 {
-	struct v4l2_output_state *state = output->renderer_state;
+	struct v4l2_output_state *state = get_output_state(output);
 	output->compositor->renderer = renderer->gl_renderer;
 	output->renderer_state = state->gl_renderer_state;
 	gl_renderer->output_destroy(output);
@@ -351,7 +351,7 @@ v4l2_gl_repaint(struct weston_output *output,
 {
 	struct weston_compositor *ec = output->compositor;
 	struct v4l2_renderer *renderer = get_renderer(ec);
-	struct v4l2_output_state *state = output->renderer_state;;
+	struct v4l2_output_state *state = get_output_state(output);
 	struct weston_view *ev;
 	int view_count;
 	static struct stack stacker = V4L2_STACK_INIT(sizeof(void *));
