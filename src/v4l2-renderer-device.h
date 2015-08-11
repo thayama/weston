@@ -93,6 +93,9 @@ struct v4l2_surface_state {
 	void *gl_renderer_state;
 
 	v4l2_surface_t surface_type;
+	int notify_attach;
+	int flush_damage;
+	pixman_region32_t damage;
 
 	struct wl_listener surface_post_destroy_listener;
 	struct wl_listener renderer_post_destroy_listener;

@@ -266,6 +266,8 @@ v4l2_gl_surface_cleanup(struct v4l2_surface_state *vs)
 	vs->surface->compositor->renderer = &vs->renderer->base;
 	vs->surface->renderer_state = NULL;
 
+	pixman_region32_fini(&vs->damage);
+
 	free(vs);
 }
 
@@ -302,7 +304,7 @@ v4l2_gl_attach(struct weston_surface *surface, struct weston_buffer *buffer)
 	surface->renderer_state = vs;
 	surface->compositor->renderer = &renderer->base;
 
-	if (vs->surface_type != V4L2_SURFACE_GL_ATTACHED) {
+	if ((buffer) && (vs->surface_type != V4L2_SURFACE_GL_ATTACHED)) {
 		vs->surface_post_destroy_listener.notify = v4l2_gl_surface_post_destroy;
 		wl_signal_add(&surface->destroy_signal, &vs->surface_post_destroy_listener);
 
@@ -364,6 +366,20 @@ v4l2_gl_repaint(struct weston_output *output,
 	view_count = 0;
 	wl_list_for_each(ev, &ec->view_list, link) {
 		struct v4l2_surface_state *vs = get_surface_state(ev->surface);
+
+		if (vs->notify_attach == 1) {
+			DBG("%s: attach gl\n", __func__);
+			v4l2_gl_attach(ev->surface, vs->buffer_ref.buffer);
+			vs->notify_attach = 0;
+		}
+		if (vs->flush_damage) {
+			DBG("%s: flush damage\n", __func__);
+			pixman_region32_copy(&ev->surface->damage, &vs->damage);
+			v4l2_gl_flush_damage(ev->surface);
+			vs->flush_damage = 0;
+			pixman_region32_clear(&ev->surface->damage);
+		}
+
 		stack[view_count++] = ev->surface->renderer_state;
 		ev->surface->renderer_state = vs->gl_renderer_state;
 	}
@@ -890,8 +906,11 @@ v4l2_renderer_flush_damage(struct weston_surface *surface)
 	 */
 
 #ifdef V4L2_GL_FALLBACK
-	if (vs->renderer->gl_fallback)
-		v4l2_gl_flush_damage(surface);
+	if (vs->renderer->gl_fallback) {
+		DBG("%s: set flush damage flag.\n", __func__);
+		vs->flush_damage = 1;
+		pixman_region32_copy(&vs->damage, &surface->damage);
+	}
 #endif
 }
 
@@ -1213,8 +1232,11 @@ v4l2_renderer_attach(struct weston_surface *es, struct weston_buffer *buffer)
 	}
 
 #ifdef V4L2_GL_FALLBACK
-	if (vs->renderer->gl_fallback)
-		v4l2_gl_attach(es, buffer);
+	if (vs->renderer->gl_fallback) {
+		if (!vs->notify_attach)
+			v4l2_gl_attach(es, NULL);
+		vs->notify_attach = 1;
+	}
 #endif
 }
 
@@ -1298,6 +1320,8 @@ v4l2_renderer_create_surface(struct weston_surface *surface)
 
 #ifdef V4L2_GL_FALLBACK
 	vs->surface_type = V4L2_SURFACE_DEFAULT;
+	vs->notify_attach = -1;
+	pixman_region32_init(&vs->damage);
 #endif
 	return 0;
 }
