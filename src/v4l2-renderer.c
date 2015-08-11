@@ -1564,7 +1564,8 @@ v4l2_renderer_output_create(struct weston_output *output, struct v4l2_bo_state *
 #ifdef V4L2_GL_FALLBACK
 	if ((renderer->gl_fallback) && (v4l2_init_gl_output(output, renderer) < 0)) {
 		// error...
-		weston_log("gl fallback failed...\n");
+		weston_log("Can't initialize gl-renderer. Disabling gl-fallback.\n");
+		renderer->gl_fallback = 0;
 	}
 #endif
 
