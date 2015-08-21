@@ -87,6 +87,7 @@ struct v4l2_surface_state {
 	struct wl_listener buffer_destroy_listener;
 	struct wl_listener surface_destroy_listener;
 	struct wl_listener renderer_destroy_listener;
+	struct wl_listener kms_buffer_destroy_listener;
 
 #ifdef V4L2_GL_FALLBACK
 	void *gl_renderer_state;
