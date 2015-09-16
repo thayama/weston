@@ -109,6 +109,7 @@ struct v4l2_renderer {
 
 #ifdef V4L2_GL_FALLBACK
 	int gl_fallback;
+	int defer_attach;
 	struct gbm_device *gbm;
 	struct weston_renderer *gl_renderer;
 #endif
@@ -260,13 +261,16 @@ v4l2_gl_flush_damage(struct weston_surface *surface)
 static void
 v4l2_gl_surface_cleanup(struct v4l2_surface_state *vs)
 {
+	struct v4l2_renderer *renderer = vs->renderer;
+
 	wl_list_remove(&vs->surface_post_destroy_listener.link);
 	wl_list_remove(&vs->renderer_post_destroy_listener.link);
 
 	vs->surface->compositor->renderer = &vs->renderer->base;
 	vs->surface->renderer_state = NULL;
 
-	pixman_region32_fini(&vs->damage);
+	if (renderer->defer_attach)
+		pixman_region32_fini(&vs->damage);
 
 	free(vs);
 }
@@ -367,17 +371,19 @@ v4l2_gl_repaint(struct weston_output *output,
 	wl_list_for_each(ev, &ec->view_list, link) {
 		struct v4l2_surface_state *vs = get_surface_state(ev->surface);
 
-		if (vs->notify_attach == 1) {
-			DBG("%s: attach gl\n", __func__);
-			v4l2_gl_attach(ev->surface, vs->buffer_ref.buffer);
-			vs->notify_attach = 0;
-		}
-		if (vs->flush_damage) {
-			DBG("%s: flush damage\n", __func__);
-			pixman_region32_copy(&ev->surface->damage, &vs->damage);
-			v4l2_gl_flush_damage(ev->surface);
-			vs->flush_damage = 0;
-			pixman_region32_clear(&ev->surface->damage);
+		if (renderer->defer_attach) {
+			if (vs->notify_attach == 1) {
+				DBG("%s: attach gl\n", __func__);
+				v4l2_gl_attach(ev->surface, vs->buffer_ref.buffer);
+				vs->notify_attach = 0;
+			}
+			if (vs->flush_damage) {
+				DBG("%s: flush damage\n", __func__);
+				pixman_region32_copy(&ev->surface->damage, &vs->damage);
+				v4l2_gl_flush_damage(ev->surface);
+				vs->flush_damage = 0;
+				pixman_region32_clear(&ev->surface->damage);
+			}
 		}
 
 		stack[view_count++] = ev->surface->renderer_state;
@@ -907,9 +913,13 @@ v4l2_renderer_flush_damage(struct weston_surface *surface)
 
 #ifdef V4L2_GL_FALLBACK
 	if (vs->renderer->gl_fallback) {
-		DBG("%s: set flush damage flag.\n", __func__);
-		vs->flush_damage = 1;
-		pixman_region32_copy(&vs->damage, &surface->damage);
+		if (vs->renderer->defer_attach) {
+			DBG("%s: set flush damage flag.\n", __func__);
+			vs->flush_damage = 1;
+			pixman_region32_copy(&vs->damage, &surface->damage);
+		} else {
+			v4l2_gl_flush_damage(surface);
+		}
 	}
 #endif
 }
@@ -1233,9 +1243,13 @@ v4l2_renderer_attach(struct weston_surface *es, struct weston_buffer *buffer)
 
 #ifdef V4L2_GL_FALLBACK
 	if (vs->renderer->gl_fallback) {
-		if (!vs->notify_attach)
-			v4l2_gl_attach(es, NULL);
-		vs->notify_attach = 1;
+		if (vs->renderer->defer_attach) {
+			if (!vs->notify_attach)
+				v4l2_gl_attach(es, NULL);
+			vs->notify_attach = 1;
+		} else {
+			v4l2_gl_attach(es, buffer);
+		}
 	}
 #endif
 }
@@ -1321,7 +1335,8 @@ v4l2_renderer_create_surface(struct weston_surface *surface)
 #ifdef V4L2_GL_FALLBACK
 	vs->surface_type = V4L2_SURFACE_DEFAULT;
 	vs->notify_attach = -1;
-	pixman_region32_init(&vs->damage);
+	if (vr->defer_attach)
+		pixman_region32_init(&vs->damage);
 #endif
 	return 0;
 }
@@ -1444,6 +1459,7 @@ v4l2_renderer_init(struct weston_compositor *ec, int drm_fd, char *drm_fn)
 	weston_config_section_get_string(section, "device", &device, "/dev/media0");
 #ifdef V4L2_GL_FALLBACK
 	weston_config_section_get_bool(section, "gl-fallback", &renderer->gl_fallback, 0);
+	weston_config_section_get_bool(section, "defer-attach", &renderer->defer_attach, 0);
 #endif
 
 	/* Initialize V4L2 media controller */
