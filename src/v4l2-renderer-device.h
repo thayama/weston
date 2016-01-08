@@ -57,6 +57,11 @@ struct v4l2_view {
 	struct weston_view *view;
 	struct v4l2_surface_state *state;
 };
+
+typedef enum {
+	V4L2_RENDERER_STATE_V4L2,
+	V4L2_RENDERER_STATE_GL
+} v4l2_renderer_state_t;
 #endif
 
 struct v4l2_surface_state {
@@ -93,6 +98,7 @@ struct v4l2_surface_state {
 	void *gl_renderer_state;
 
 	v4l2_surface_t surface_type;
+	v4l2_renderer_state_t state_type;
 	int notify_attach;
 	int flush_damage;
 	pixman_region32_t damage;

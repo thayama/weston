@@ -359,7 +359,7 @@ v4l2_gl_repaint(struct weston_output *output,
 	struct v4l2_renderer *renderer = get_renderer(ec);
 	struct v4l2_output_state *state = get_output_state(output);
 	struct weston_view *ev;
-	int view_count;
+	int view_count, i;
 	static struct stack stacker = V4L2_STACK_INIT(sizeof(void *));
 	void **stack;
 
@@ -386,8 +386,15 @@ v4l2_gl_repaint(struct weston_output *output,
 			}
 		}
 
-		stack[view_count++] = ev->surface->renderer_state;
-		ev->surface->renderer_state = vs->gl_renderer_state;
+		stack[view_count++] = vs;
+	}
+
+	for (i = 0; i < view_count; i++) {
+		struct v4l2_surface_state *vs = stack[i];
+		if (vs->state_type == V4L2_RENDERER_STATE_V4L2) {
+			vs->surface->renderer_state = vs->gl_renderer_state;
+			vs->state_type = V4L2_RENDERER_STATE_GL;
+		}
 	}
 
 	ec->renderer = renderer->gl_renderer;
@@ -398,7 +405,11 @@ v4l2_gl_repaint(struct weston_output *output,
 
 	view_count = 0;
 	wl_list_for_each(ev, &ec->view_list, link) {
-		ev->surface->renderer_state = stack[view_count++];
+		struct v4l2_surface_state *vs = stack[view_count++];
+		if (vs->state_type == V4L2_RENDERER_STATE_GL) {
+			ev->surface->renderer_state = vs;
+			vs->state_type = V4L2_RENDERER_STATE_V4L2;
+		}
 	}
 }
 #endif
