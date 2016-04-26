@@ -1022,11 +1022,9 @@ page_flip_handler(int fd, unsigned int frame,
 
 static uint32_t
 drm_output_check_sprite_format(struct drm_sprite *s,
-			       struct weston_view *ev, struct gbm_bo *bo)
+			       struct weston_view *ev, uint32_t format)
 {
-	uint32_t i, format;
-
-	format = gbm_bo_get_format(bo);
+	uint32_t i;
 
 	if (format == GBM_FORMAT_ARGB8888) {
 		pixman_region32_t r;
@@ -1067,7 +1065,7 @@ drm_output_prepare_overlay_view(struct drm_output *output,
 	struct drm_sprite *s;
 	struct linux_dmabuf_buffer *dmabuf;
 	int found = 0;
-	struct gbm_bo *bo;
+	struct gbm_bo *bo = NULL;
 	pixman_region32_t dest_rect, src_rect;
 	pixman_box32_t *box, tbox;
 	uint32_t format;
@@ -1078,10 +1076,6 @@ drm_output_prepare_overlay_view(struct drm_output *output,
 
 	/* Don't import buffers which span multiple outputs. */
 	if (ev->output_mask != (1u << output->base.id))
-		return NULL;
-
-	/* We can only import GBM buffers. */
-	if (b->gbm == NULL)
 		return NULL;
 
 	if (ev->surface->buffer_ref.buffer == NULL)
@@ -1114,59 +1108,70 @@ drm_output_prepare_overlay_view(struct drm_output *output,
 	if (!found)
 		return NULL;
 
-	if ((dmabuf = linux_dmabuf_buffer_get(buffer_resource))) {
-#ifdef HAVE_GBM_FD_IMPORT
-		/* XXX: TODO:
-		 *
-		 * Use AddFB2 directly, do not go via GBM.
-		 * Add support for multiplanar formats.
-		 * Both require refactoring in the DRM-backend to
-		 * support a mix of gbm_bos and drmfbs.
-		 */
-		struct gbm_import_fd_data gbm_dmabuf = {
-			.fd     = dmabuf->attributes.fd[0],
-			.width  = dmabuf->attributes.width,
-			.height = dmabuf->attributes.height,
-			.stride = dmabuf->attributes.stride[0],
-			.format = dmabuf->attributes.format
-		};
+	dmabuf = linux_dmabuf_buffer_get(buffer_resource);
+	if (dmabuf && !b->no_addfb2) {
+		format = drm_output_check_sprite_format(
+				s, ev, dmabuf->attributes.format);
+		if (format == 0)
+			return NULL;
+		s->next = drm_fb_create_dmabuf(dmabuf, b, format);
+		if (!s->next)
+			return NULL;
+	}
 
-                /* XXX: TODO:
-                 *
-                 * Currently the buffer is rejected if any dmabuf attribute
-                 * flag is set.  This keeps us from passing an inverted /
-                 * interlaced / bottom-first buffer (or any other type that may
-                 * be added in the future) through to an overlay.  Ultimately,
-                 * these types of buffers should be handled through buffer
-                 * transforms and not as spot-checks requiring specific
-                 * knowledge. */
-		if (dmabuf->attributes.n_planes != 1 ||
-                    dmabuf->attributes.offset[0] != 0 ||
-		    dmabuf->attributes.flags)
+	if (!s->next) {
+		if (!b->gbm)
 			return NULL;
 
-		bo = gbm_bo_import(b->gbm, GBM_BO_IMPORT_FD, &gbm_dmabuf,
-				   GBM_BO_USE_SCANOUT);
+		if (dmabuf) {
+#ifdef HAVE_GBM_FD_IMPORT
+			struct gbm_bo *bo;
+			struct gbm_import_fd_data gbm_dmabuf = {
+				.fd     = dmabuf->attributes.fd[0],
+				.width  = dmabuf->attributes.width,
+				.height = dmabuf->attributes.height,
+				.stride = dmabuf->attributes.stride[0],
+				.format = dmabuf->attributes.format
+			};
+
+			/* XXX: TODO:
+			 *
+			 * Currently the buffer is rejected if any dmabuf
+			 * attribute flag is set.  This keeps us from passing
+			 * an inverted / interlaced / bottom-first buffer (or
+			 * any other type that may be added in the future)
+			 * through to an overlay.  Ultimately, these types of
+			 * buffers should be handled through buffer transforms
+			 and not as spot-checks requiring specific knowledge. */
+			if (dmabuf->attributes.n_planes != 1 ||
+			    dmabuf->attributes.offset[0] != 0 ||
+			    dmabuf->attributes.flags)
+				return NULL;
+
+			bo = gbm_bo_import(b->gbm, GBM_BO_IMPORT_FD,
+					   &gbm_dmabuf, GBM_BO_USE_SCANOUT);
 #else
-		return NULL;
+			return NULL;
 #endif
-	} else {
-		bo = gbm_bo_import(b->gbm, GBM_BO_IMPORT_WL_BUFFER,
-				   buffer_resource, GBM_BO_USE_SCANOUT);
-	}
-	if (!bo)
-		return NULL;
+		} else {
+			bo = gbm_bo_import(b->gbm, GBM_BO_IMPORT_WL_BUFFER,
+					   buffer_resource, GBM_BO_USE_SCANOUT);
+		}
 
-	format = drm_output_check_sprite_format(s, ev, bo);
-	if (format == 0) {
-		gbm_bo_destroy(bo);
-		return NULL;
-	}
+		if (!bo)
+			return NULL;
 
-	s->next = drm_fb_get_from_bo(bo, b, format);
-	if (!s->next) {
-		gbm_bo_destroy(bo);
-		return NULL;
+		format = drm_output_check_sprite_format(
+				s, ev, gbm_bo_get_format(bo));
+		if (format == 0) {
+			gbm_bo_destroy(bo);
+			return NULL;
+		}
+		s->next = drm_fb_get_from_bo(bo, b, format);
+		if (!s->next) {
+			gbm_bo_destroy(bo);
+			return NULL;
+		}
 	}
 
 	drm_fb_set_buffer(s->next, ev->surface->buffer_ref.buffer);
