@@ -282,9 +282,10 @@ v4l2_vsp1_device_la_SOURCES =			\
 
 module_LTLIBRARIES += v4l2-vsp2-device.la
 v4l2_vsp2_device_la_LDFLAGS = -module -avoid-version
-v4l2_vsp2_device_la_LIBADD = $(COMPOSITOR_LIBS) -L"./src/media-ctl" -lmediactl-v4l2
+v4l2_vsp2_device_la_LIBADD = $(COMPOSITOR_LIBS) $(V4L2_RENDERER_LIBS) -L"./src/media-ctl" -lmediactl-v4l2
 v4l2_vsp2_device_la_CFLAGS =				\
 	$(COMPOSITOR_CFLAGS)			\
+	$(V4L2_RENDERER_CFLAGS)                 \
 	$(GCC_CFLAGS)
 v4l2_vsp2_device_la_SOURCES =			\
 	src/vsp2-renderer.c			\
