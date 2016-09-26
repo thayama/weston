@@ -190,24 +190,25 @@ v4l2_init_gl_output(struct weston_output *output, struct v4l2_renderer *renderer
 	struct v4l2_output_state *state = get_output_state(output);
 	int i;
 	pixman_format_code_t read_format;
+	int gbm_surface_flags = GBM_BO_USE_SCANOUT | GBM_BO_USE_RENDERING | GBM_BO_CREATE_EMPTY;
+
+	if (state->bo_count == 3)
+		gbm_surface_flags |= GBM_BO_TRIPLE_BUFFERS;
 
 	state->gbm_surface = gbm_surface_create(renderer->gbm,
 						output->current_mode->width,
 						output->current_mode->height,
 						format,
-						GBM_BO_USE_SCANOUT |
-						GBM_BO_USE_RENDERING |
-						GBM_BO_CREATE_EMPTY);
+						gbm_surface_flags);
 
 	if (!state->gbm_surface) {
 		weston_log("%s: failed to create gbm surface\n", __func__);
 		return -1;
 	}
 
-	for (i = 0; i < 2; i++) {
-		int n = i % state->bo_count;
+	for (i = 0; i < state->bo_count; i++) {
 		gbm_kms_set_bo((struct gbm_kms_surface *)state->gbm_surface,
-			       n, state->bo[n].map, state->bo[n].stride);
+			       i, state->bo[i].map, state->bo[i].stride);
 	}
 
 	output->compositor->renderer = renderer->gl_renderer;
@@ -873,7 +874,8 @@ v4l2_renderer_repaint_output(struct weston_output *output,
 		wl_signal_emit(&output->frame_signal, output);
 #ifdef V4L2_GL_FALLBACK
 	} else {
-		gbm_kms_set_front((struct gbm_kms_surface *)vo->gbm_surface, (!vo->bo_index));
+		int front_index = (vo->bo_index + vo->bo_count - 1) % vo->bo_count;
+		gbm_kms_set_front((struct gbm_kms_surface *)vo->gbm_surface, front_index);
 
 		v4l2_gl_repaint(output, output_damage);
 	}

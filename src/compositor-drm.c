@@ -166,8 +166,8 @@ struct drm_output {
 	struct drm_fb *current, *next;
 	struct backlight *backlight;
 
-	struct drm_fb *dumb[2];
-	pixman_image_t *image[2];
+	struct drm_fb *dumb[3];
+	pixman_image_t *image[3];
 	int current_image;
 	pixman_region32_t previous_damage;
 
@@ -421,7 +421,7 @@ drm_output_release_fb(struct drm_output *output, struct drm_fb *fb)
 		return;
 
 	if (fb->map &&
-            (fb != output->dumb[0] && fb != output->dumb[1])) {
+            (fb != output->dumb[0] && fb != output->dumb[1] && fb != output->dumb[2])) {
 		drm_fb_destroy_dumb(fb);
 	} else if (fb->bo) {
 		if (fb->is_client_buffer)
@@ -570,7 +570,7 @@ drm_output_render_v4l2(struct drm_output *output, pixman_region32_t *damage)
 	pixman_region32_union(&total_damage, damage, &output->previous_damage);
 	pixman_region32_copy(&output->previous_damage, &previous_damage);
 
-	output->current_image ^= 1;
+	output->current_image = (output->current_image + 1) % ARRAY_LENGTH(output->dumb);
 
 	output->next = output->dumb[output->current_image];
 	v4l2_renderer->set_output_buffer(&output->base, output->current_image);
@@ -1649,7 +1649,8 @@ drm_output_init_pixman(struct drm_output *output, struct drm_compositor *c)
 
 	/* FIXME error checking */
 
-	for (i = 0; i < ARRAY_LENGTH(output->dumb); i++) {
+	// XXX: Hard coded for temporal fix. We don't want 3 buffers for pixman.
+	for (i = 0; i < 2; i++) {
 		output->dumb[i] = drm_fb_create_dumb(c, w, h);
 		if (!output->dumb[i])
 			goto err;
@@ -1671,7 +1672,7 @@ drm_output_init_pixman(struct drm_output *output, struct drm_compositor *c)
 	return 0;
 
 err:
-	for (i = 0; i < ARRAY_LENGTH(output->dumb); i++) {
+	for (i = 0; i < 2; i++) {
 		if (output->dumb[i])
 			drm_fb_destroy_dumb(output->dumb[i]);
 		if (output->image[i])
@@ -1692,7 +1693,7 @@ drm_output_fini_pixman(struct drm_output *output)
 	pixman_renderer_output_destroy(&output->base);
 	pixman_region32_fini(&output->previous_damage);
 
-	for (i = 0; i < ARRAY_LENGTH(output->dumb); i++) {
+	for (i = 0; i < 2; i++) {
 		drm_fb_destroy_dumb(output->dumb[i]);
 		pixman_image_unref(output->image[i]);
 		output->dumb[i] = NULL;
