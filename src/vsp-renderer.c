@@ -38,6 +38,7 @@
 
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/ioctl.h>
 #include <fcntl.h>
 
 #include <linux/videodev2.h>
@@ -49,8 +50,6 @@
 #include "media-ctl/mediactl-priv.h"
 #include "media-ctl/v4l2subdev.h"
 #include "media-ctl/tools.h"
-
-#include <linux/input.h>
 
 #if 0
 #define DBG(...) weston_log(__VA_ARGS__)

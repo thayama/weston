@@ -38,6 +38,7 @@
 
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/ioctl.h>
 #include <fcntl.h>
 
 #include <linux/videodev2.h>
@@ -55,8 +56,6 @@
 #include <xf86drm.h>
 #include <libkms/libkms.h>
 #endif
-
-#include <linux/input.h>
 
 #if 0
 #define DBG(...) weston_log(__VA_ARGS__)
