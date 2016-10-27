@@ -30,6 +30,10 @@
 
 #include "compositor.h"
 
+#include <errno.h>
+#include <sys/ioctl.h>
+#include <linux/media.h>
+
 /*
  * Enable gl-fallback feature.
  */
@@ -40,7 +44,7 @@
 #endif
 
 struct v4l2_renderer_device {
-	struct media_device *media;
+	int media_fd;
 	const char *device_name;
 #ifdef V4L2_GL_FALLBACK
 	struct kms_driver *kms;
@@ -123,7 +127,7 @@ struct v4l2_surface_state {
 };
 
 struct v4l2_device_interface {
-	struct v4l2_renderer_device *(*init)(struct media_device *media, struct weston_config *config);
+	struct v4l2_renderer_device *(*init)(int media_fd, struct media_device_info *info, struct weston_config *config);
 
 	struct v4l2_renderer_output *(*create_output)(struct v4l2_renderer_device *dev, int width, int height);
 	void (*set_output_buffer)(struct v4l2_renderer_output *out, struct v4l2_bo_state *bo);
@@ -135,7 +139,7 @@ struct v4l2_device_interface {
 	void (*finish_compose)(struct v4l2_renderer_device *dev);
 	int (*draw_view)(struct v4l2_renderer_device *dev, struct v4l2_surface_state *vs);
 #ifdef V4L2_GL_FALLBACK
-	int (*can_compose)(struct v4l2_view *view_list, int count);
+	int (*can_compose)(struct v4l2_renderer_device *dev, struct v4l2_view *view_list, int count);
 #endif
 
 	uint32_t (*get_capabilities)(void);

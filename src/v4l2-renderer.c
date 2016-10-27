@@ -43,6 +43,7 @@
 
 #include <linux/videodev2.h>
 #include <linux/v4l2-subdev.h>
+#include <linux/media.h>
 #include "v4l2-renderer.h"
 #include "v4l2-renderer-device.h"
 
@@ -55,10 +56,6 @@
 #include "linux-dmabuf.h"
 #include "linux-dmabuf-unstable-v1-server-protocol.h"
 #include "shared/helpers.h"
-
-#include "media-ctl/mediactl.h"
-#include "media-ctl/v4l2subdev.h"
-#include "media-ctl/tools.h"
 
 #ifdef V4L2_GL_FALLBACK
 #include <dlfcn.h>
@@ -100,9 +97,9 @@ struct v4l2_renderer {
 	struct kms_driver *kms;
 	struct wl_kms *wl_kms;
 
-	struct media_device *media;
 	char *device_name;
 	int drm_fd;
+	int media_fd;
 
 	struct v4l2_renderer_device *device;
 
@@ -836,6 +833,7 @@ can_repaint(struct weston_compositor *c, pixman_region32_t *output_region)
 	int need_repaint, view_count;
 	static struct stack stacker = V4L2_STACK_INIT(sizeof(struct v4l2_view));
 	struct v4l2_view *view_list;
+	struct v4l2_renderer *vr = get_renderer(c);
 
 	DBG("%s: checking...\n", __func__);
 
@@ -871,7 +869,7 @@ can_repaint(struct weston_compositor *c, pixman_region32_t *output_region)
 		}
 	}
 
-	return device_interface->can_compose(view_list, view_count);
+	return device_interface->can_compose(vr->device, view_list, view_count);
 }
 #endif
 
@@ -1621,19 +1619,6 @@ v4l2_renderer_destroy(struct weston_compositor *ec)
 }
 
 static void
-debug_media_ctl(void *ignore, char *fmt, ...)
-{
-	char buffer[256];
-	va_list ap;
-
-	va_start(ap, fmt);
-	vsnprintf(buffer, sizeof(buffer), fmt, ap);
-	va_end(ap);
-
-	weston_log(buffer);
-}
-
-static void
 debug_binding(struct weston_keyboard *keyboard, uint32_t time, uint32_t key,
 	      void *data)
 {
@@ -1644,10 +1629,7 @@ debug_binding(struct weston_keyboard *keyboard, uint32_t time, uint32_t key,
 
 	if (vr->repaint_debug) {
 		// TODO: enable repaint debug
-
-                media_debug_set_handler(vr->media,
-					(void (*)(void *, ...))debug_media_ctl, NULL);
-
+		
 	} else {
 		// TODO: disable repaint debug
 
@@ -1717,7 +1699,7 @@ v4l2_renderer_init(struct weston_compositor *ec, int drm_fd, char *drm_fn)
 	struct v4l2_renderer *renderer;
 	char *device;
 	char *device_name = NULL;
-	const struct media_device_info *info;
+	static struct media_device_info info;
 	struct weston_config_section *section;
 
 	if (!drm_fn)
@@ -1739,24 +1721,21 @@ v4l2_renderer_init(struct weston_compositor *ec, int drm_fd, char *drm_fn)
 #endif
 
 	/* Initialize V4L2 media controller */
-	renderer->media = media_device_new(device);
-	if (!renderer->media) {
-		weston_log("Can't create a media controller.");
-		goto error;
-	}
-
-	/* Enumerate entities, pads and links */
-	if (media_device_enumerate(renderer->media)) {
-		weston_log("Can't enumerate %s.", device);
+	renderer->media_fd = open(device, O_RDWR);
+	if (renderer->media_fd < 0) {
+		weston_log("Can't open the media device.");
 		goto error;
 	}
 
 	/* Device info */
-	info = media_get_info(renderer->media);
+	if (ioctl(renderer->media_fd, MEDIA_IOC_DEVICE_INFO, &info) < 0) {
+		weston_log("Can't get media device info.");
+		goto error;
+	}
 	weston_log("Media controller API version %u.%u.%u\n",
-		   (info->media_version >> 16) & 0xff,
-		   (info->media_version >>  8) & 0xff,
-		   (info->media_version)       & 0xff);
+		   (info.media_version >> 16) & 0xff,
+		   (info.media_version >>  8) & 0xff,
+		   (info.media_version)       & 0xff);
 	weston_log_continue("Media device information\n"
 			    "------------------------\n"
 			    "driver         %s\n"
@@ -1765,12 +1744,12 @@ v4l2_renderer_init(struct weston_compositor *ec, int drm_fd, char *drm_fn)
 			    "bus info       %s\n"
 			    "hw revision    0x%x\n"
 			    "driver version %u.%u.%u\n",
-			    info->driver, info->model,
-			    info->serial, info->bus_info,
-			    info->hw_revision,
-			    (info->driver_version >> 16) & 0xff,
-			    (info->driver_version >>  8) & 0xff,
-			    (info->driver_version)       & 0xff);
+			    info.driver, info.model,
+			    info.serial, info.bus_info,
+			    info.hw_revision,
+			    (info.driver_version >> 16) & 0xff,
+			    (info.driver_version >>  8) & 0xff,
+			    (info.driver_version)       & 0xff);
 
 	/* Get device module to use */
 	section = weston_config_get_section(ec->config,
@@ -1778,12 +1757,12 @@ v4l2_renderer_init(struct weston_compositor *ec, int drm_fd, char *drm_fn)
 	weston_config_section_get_string(section, "device-module",
 					 &device_name, NULL);
 	if (!device_name)
-		device_name = v4l2_get_cname(info->bus_info);
+		device_name = v4l2_get_cname(info.bus_info);
 	v4l2_load_device_module(device_name);
 	if (!device_interface)
 		goto error;
 
-	renderer->device = device_interface->init(renderer->media, ec->config);
+	renderer->device = device_interface->init(renderer->media_fd, &info, ec->config);
 	if (!renderer->device)
 		goto error;
 
