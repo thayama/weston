@@ -187,6 +187,7 @@ struct vsp_device {
 
 	struct vsp2_media_entity *bru;
 	struct vsp2_media_entity *wpf;
+	struct v4l2_format current_wpf_fmt;
 
 #ifdef VSP2_SCALER_ENABLED
 	scaler_t scaler_type;
@@ -731,9 +732,13 @@ vsp2_attach_buffer(struct v4l2_surface_state *surface_state)
 static int
 vsp2_set_format(int fd, struct v4l2_format *fmt, int opaque)
 {
-	struct v4l2_format current_fmt;
 	int ret;
 	unsigned int original_pixelformat = fmt->fmt.pix_mp.pixelformat;
+
+#if 0
+	// For debugging purpose only
+
+	struct v4l2_format current_fmt;
 
 	memset(&current_fmt, 0, sizeof(struct v4l2_format));
 	current_fmt.type = fmt->type;
@@ -752,6 +757,7 @@ vsp2_set_format(int fd, struct v4l2_format *fmt, int opaque)
 	    current_fmt.fmt.pix_mp.width, current_fmt.fmt.pix_mp.height, current_fmt.fmt.pix_mp.plane_fmt[0].bytesperline,
 	    current_fmt.fmt.pix_mp.field,
 	    current_fmt.fmt.pix_mp.plane_fmt[0].sizeimage);
+#endif
 
 	switch (original_pixelformat) {
 	case V4L2_PIX_FMT_ABGR32:
@@ -1008,23 +1014,31 @@ vsp2_comp_begin(struct v4l2_renderer_device *dev, struct v4l2_renderer_output *o
 
 	vsp->state = VSP_STATE_START;
 
+	if (!memcmp(&vsp->current_wpf_fmt, fmt, sizeof(struct v4l2_format))) {
+		DBG(">>> No need to set up the output.\n");
+		goto skip;
+	}
+
 	vsp2_set_output(vsp, output);
 
-	// JUST IN CASE
+	// dump the old setting
 	vsp2_request_buffer(vsp->wpf->devnode.fd, 1, 0);
 
 	// set format for composition output via wpf.0
 	fmt->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
 	vsp2_set_format(vsp->wpf->devnode.fd, fmt, 0);
 
-	// change type to OUTPUT to be used by bru
+	// set back the type to be used by bru as an input
 	fmt->type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
-
-	vsp->output_surface_state = &output->surface_state;
 
 	// we require only one buffer for wpf.0
 	vsp2_request_buffer(vsp->wpf->devnode.fd, 1, 1);
 
+	// keep the current setting
+	vsp->current_wpf_fmt = *fmt;
+
+skip:
+	vsp->output_surface_state = &output->surface_state;
 	DBG("output set to dmabuf=%d\n", vsp->output_surface_state->base.planes[0].dmafd);
 }
 
@@ -1118,7 +1132,7 @@ vsp2_comp_setup_inputs(struct vsp_device *vsp, struct vsp_input *input, bool ena
 		return -1;
 	}
 
-	// JUST IN CASE
+	// dump the old setting
 	if (vsp2_request_buffer(rpf->devnode.fd, 0, 0) < 0)
 		return -1;
 
