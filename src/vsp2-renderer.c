@@ -80,13 +80,6 @@ struct vsp_renderer_output {
 #define VSP_SCALER_MAX	1
 #define VSP_SCALER_MIN_PIXELS	4	// UDS can't take pixels smaller than this
 
-enum vsp2_entity_type {
-	ENTITY_TYPE_INPUT,
-	ENTITY_TYPE_OUTPUT,
-	ENTITY_TYPE_COMPOSITOR,
-	ENTITY_TYPE_SCALER
-};
-
 struct __vsp2_media_entity {
 	const char *name;
 	int fd;
@@ -94,67 +87,29 @@ struct __vsp2_media_entity {
 };
 
 struct vsp2_media_entity {
-	enum vsp2_entity_type type;
 	struct __vsp2_media_entity devnode;
 	struct __vsp2_media_entity subdev;
 	struct media_link_desc link;
 };
 
-#define MEDIA_ENTITY_FOR_INPUT(idx, dev_name, subdev_name, sink_idx)	\
+#define MEDIA_ENTITY(idx, dev_name, subdev_name, src_idx, sink_idx)	\
 	[(idx)] = {				\
-		.type = ENTITY_TYPE_INPUT,	\
 		.devnode = {			\
 			.name = (dev_name),	\
 			.fd = -1		\
 		},				\
 		.subdev = {			\
 			.name = (subdev_name),	\
-			.fd = -1		\
-		},				\
-		.link = {			\
-			.source = {		\
-				.index = 1,	\
-				.flags = MEDIA_PAD_FL_SOURCE	\
-			},			\
-			.sink = {		\
-				.index = (sink_idx),		\
-				.flags = MEDIA_PAD_FL_SINK	\
-			}			\
-		}				\
-	}
-
-#define MEDIA_ENTITY_FOR_OUTPUT(idx, dev_name, subdev_name)	\
-	[(idx)] = {				\
-		.type = ENTITY_TYPE_OUTPUT,	\
-		.devnode = {			\
-			.name = (dev_name),	\
-			.fd = -1		\
-		},				\
-		.subdev = {			\
-			.name = (subdev_name),	\
-			.fd = -1		\
-		},				\
-	}
-
-#define MEDIA_ENTITY_FOR_FILTER(idx, subdev_name, src_idx)	\
-	[(idx)] = {				\
-		.type = ENTITY_TYPE_COMPOSITOR,	\
-		.devnode = {			\
-			.name = NULL,		\
-			.fd = -1		\
-		},				\
-		.subdev = {			\
-			.name = (subdev_name),		\
 			.fd = -1		\
 		},				\
 		.link = {			\
 			.source = {		\
 				.index = (src_idx),	\
-				.flags = MEDIA_PAD_FL_SOURCE \
+				.flags = MEDIA_PAD_FL_SOURCE	\
 			},			\
 			.sink = {		\
-				.index = 0,	\
-				.flags = MEDIA_PAD_FL_SINK \
+				.index = (sink_idx),		\
+				.flags = MEDIA_PAD_FL_SINK	\
 			}			\
 		}				\
 	}
@@ -167,15 +122,15 @@ enum {
 };
 
 static struct vsp2_media_entity vspb_entities[] = {
-	MEDIA_ENTITY_FOR_INPUT(VSPB_RPF0, "rpf.0 input", "rpf.0", 0),	// rpf.0:1 -> bru:0
-	MEDIA_ENTITY_FOR_INPUT(VSPB_RPF1, "rpf.1 input", "rpf.1", 1),	// rpf.1:1 -> bru:1
-	MEDIA_ENTITY_FOR_INPUT(VSPB_RPF2, "rpf.2 input", "rpf.2", 2),	// rpf.2:1 -> bru:2
-	MEDIA_ENTITY_FOR_INPUT(VSPB_RPF3, "rpf.3 input", "rpf.3", 3),	// rpf.3:1 -> bru:3
-	MEDIA_ENTITY_FOR_INPUT(VSPB_RPF4, "rpf.4 input", "rpf.4", 4),	// rpf.4:1 -> bru:4
+	MEDIA_ENTITY(VSPB_RPF0, "rpf.0 input", "rpf.0", 1, 0),	// rpf.0:1 -> bru:0
+	MEDIA_ENTITY(VSPB_RPF1, "rpf.1 input", "rpf.1", 1, 1),	// rpf.1:1 -> bru:1
+	MEDIA_ENTITY(VSPB_RPF2, "rpf.2 input", "rpf.2", 1, 2),	// rpf.2:1 -> bru:2
+	MEDIA_ENTITY(VSPB_RPF3, "rpf.3 input", "rpf.3", 1, 3),	// rpf.3:1 -> bru:3
+	MEDIA_ENTITY(VSPB_RPF4, "rpf.4 input", "rpf.4", 1, 4),	// rpf.4:1 -> bru:4
 
-	MEDIA_ENTITY_FOR_FILTER(VSPB_BRU, "bru", 5),			// bru:5 -> wpf.0:0
+	MEDIA_ENTITY(VSPB_BRU, NULL, "bru", 5, 0),			// bru:5 -> wpf.0:0
 
-	MEDIA_ENTITY_FOR_OUTPUT(VSPB_WPF0, "wpf.0 output", "wpf.0")
+	MEDIA_ENTITY(VSPB_WPF0, "wpf.0 output", "wpf.0", -1, -1)	// immutable
 };
 
 #ifdef VSP2_SCALER_ENABLED
@@ -187,11 +142,11 @@ enum {
 };
 
 static struct vsp2_media_entity vspi_entities[] = {
-	MEDIA_ENTITY_FOR_INPUT(VSPI_RPF0, "rpf.0 input", "rpf.0", 0),	// rpf.0:1 -> uds.0:0
+	MEDIA_ENTITY(VSPI_RPF0, "rpf.0 input", "rpf.0", 1, 0),	// rpf.0:1 -> uds.0:0
 
-	MEDIA_ENTITY_FOR_FILTER(VSPI_UDS0, "uds.0", 1),			// uds.0:1 -> wpf.0;0
+	MEDIA_ENTITY(VSPI_UDS0, NULL, "uds.0", 1, 0),			// uds.0:1 -> wpf.0:0
 
-	MEDIA_ENTITY_FOR_OUTPUT(VSPI_WPF0, "wpf.0 output", "wpf.0")
+	MEDIA_ENTITY(VSPI_WPF0, "wpf.0 output", "wpf.0", -1, -1)	// immutable
 };
 
 typedef enum {
