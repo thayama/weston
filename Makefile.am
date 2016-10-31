@@ -263,7 +263,7 @@ v4l2_renderer_la_SOURCES =			\
 
 module_LTLIBRARIES += v4l2-vsp2-device.la
 v4l2_vsp2_device_la_LDFLAGS = -module -avoid-version
-v4l2_vsp2_device_la_LIBADD = $(COMPOSITOR_LIBS) $(LIBDRM_LIBS)
+v4l2_vsp2_device_la_LIBADD = $(COMPOSITOR_LIBS) $(V4L2_RENDERER_LIBS)
 v4l2_vsp2_device_la_CFLAGS =				\
 	$(COMPOSITOR_CFLAGS)			\
 	$(LIBDRM_CFLAGS)			\
