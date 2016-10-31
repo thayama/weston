@@ -47,11 +47,15 @@
 #include "v4l2-renderer.h"
 #include "v4l2-renderer-device.h"
 
-#ifdef V4L2_GL_FALLBACK
+#ifdef V4L2_GL_FALLBACK_ENABLED
 #include <unistd.h>
 #include <xf86drm.h>
 #include <libkms/libkms.h>
 #endif
+
+/*
+ * Enable scaling with VSPI UDS
+ */
 
 // #define VSP2_SCALER_ENABLED
 
@@ -191,7 +195,7 @@ struct vsp_device {
 	struct vsp_scaler_device *scaler;
 #endif
 
-#ifdef V4L2_GL_FALLBACK
+#ifdef V4L2_GL_FALLBACK_ENABLED
 	int max_views_to_compose;
 #endif
 };
@@ -553,7 +557,7 @@ vsp2_init(int media_fd, struct media_device_info *info, struct weston_config *co
 	section = weston_config_get_section(config,
 					    "vsp-renderer", NULL, NULL);
 	weston_config_section_get_int(section, "max_inputs", &vsp->input_max, VSP_INPUT_DEFAULT);
-#ifdef V4L2_GL_FALLBACK
+#ifdef V4L2_GL_FALLBACK_ENABLED
 	weston_config_section_get_int(section, "max_views_to_compose", &vsp->max_views_to_compose, -1);
 #endif
 
@@ -1490,7 +1494,7 @@ vsp2_set_output_buffer(struct v4l2_renderer_output *out, struct v4l2_bo_state *b
 	output->surface_state.fmt.fmt.pix_mp.plane_fmt[0].bytesperline = bo->stride;
 }
 
-#ifdef V4L2_GL_FALLBACK
+#ifdef V4L2_GL_FALLBACK_ENABLED
 static int
 vsp2_can_compose(struct v4l2_renderer_device *dev, struct v4l2_view *view_list, int count)
 {
@@ -1538,7 +1542,7 @@ WL_EXPORT struct v4l2_device_interface v4l2_device_interface = {
 	.finish_compose = vsp2_comp_finish,
 	.draw_view = vsp2_comp_draw_view,
 
-#ifdef V4L2_GL_FALLBACK
+#ifdef V4L2_GL_FALLBACK_ENABLED
 	.can_compose = vsp2_can_compose,
 #endif
 

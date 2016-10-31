@@ -57,7 +57,7 @@
 #include "linux-dmabuf-unstable-v1-server-protocol.h"
 #include "shared/helpers.h"
 
-#ifdef V4L2_GL_FALLBACK
+#ifdef V4L2_GL_FALLBACK_ENABLED
 #include <dlfcn.h>
 #include <gbm.h>
 #include <gbm_kmsint.h>
@@ -85,7 +85,7 @@ struct v4l2_output_state {
 	struct v4l2_bo_state *bo;
 	int bo_count;
 	int bo_index;
-#ifdef V4L2_GL_FALLBACK
+#ifdef V4L2_GL_FALLBACK_ENABLED
 	void *gl_renderer_state;
 	struct gbm_surface *gbm_surface;
 #endif
@@ -108,7 +108,7 @@ struct v4l2_renderer {
 
 	struct wl_signal destroy_signal;
 
-#ifdef V4L2_GL_FALLBACK
+#ifdef V4L2_GL_FALLBACK_ENABLED
 	int gl_fallback;
 	int defer_attach;
 	struct gbm_device *gbm;
@@ -143,7 +143,7 @@ get_renderer(struct weston_compositor *ec)
 	return (struct v4l2_renderer *)ec->renderer;
 }
 
-#ifdef V4L2_GL_FALLBACK
+#ifdef V4L2_GL_FALLBACK_ENABLED
 static struct gbm_device *
 v4l2_create_gbm_device(int fd)
 {
@@ -451,7 +451,7 @@ v4l2_renderer_read_pixels(struct weston_output *output,
 		return -1;
 	}
 
-#ifdef V4L2_GL_FALLBACK
+#ifdef V4L2_GL_FALLBACK_ENABLED
 	if (output->compositor->capabilities & WESTON_CAP_CAPTURE_YFLIP) {
 		src = bo->map + x * 4 + (output->height - (y + height)) * bo->stride;
 		dst = pixels + len * (height - 1);
@@ -824,7 +824,7 @@ repaint_surfaces(struct weston_output *output, pixman_region32_t *damage)
 	device_interface->finish_compose(renderer->device);
 }
 
-#ifdef V4L2_GL_FALLBACK
+#ifdef V4L2_GL_FALLBACK_ENABLED
 static int
 can_repaint(struct weston_compositor *c, pixman_region32_t *output_region)
 {
@@ -877,31 +877,27 @@ static void
 v4l2_renderer_repaint_output(struct weston_output *output,
 			    pixman_region32_t *output_damage)
 {
-#ifdef V4L2_GL_FALLBACK
-	struct v4l2_output_state *vo = get_output_state(output);
-	struct weston_compositor *compositor = output->compositor;
-	struct v4l2_renderer *renderer = (struct v4l2_renderer*)compositor->renderer;
-#endif
 	DBG("%s\n", __func__);
 
-#ifdef V4L2_GL_FALLBACK
-	if ((!renderer->gl_fallback) || (can_repaint(output->compositor, &output->region))) {
-#endif
-		// render all views
-		repaint_surfaces(output, output_damage);
+#ifdef V4L2_GL_FALLBACK_ENABLED
+	struct v4l2_renderer *renderer = (struct v4l2_renderer*)output->compositor->renderer;
 
-		// remember the damaged area
-		pixman_region32_copy(&output->previous_damage, output_damage);
-
-		// emits signal
-		wl_signal_emit(&output->frame_signal, output);
-#ifdef V4L2_GL_FALLBACK
-	} else {
+	if ((renderer->gl_fallback) && (!can_repaint(output->compositor, &output->region))) {
+		struct v4l2_output_state *vo = get_output_state(output);
 		gbm_kms_set_front((struct gbm_kms_surface *)vo->gbm_surface, (!vo->bo_index));
-
 		v4l2_gl_repaint(output, output_damage);
+		return;
 	}
 #endif
+
+	// render all views
+	repaint_surfaces(output, output_damage);
+
+	// remember the damaged area
+	pixman_region32_copy(&output->previous_damage, output_damage);
+
+	// emits signal
+	wl_signal_emit(&output->frame_signal, output);
 
 	/* Actual flip should be done by caller */
 }
@@ -943,7 +939,7 @@ v4l2_renderer_flush_damage(struct weston_surface *surface)
 	 * optimize updates.
 	 */
 
-#ifdef V4L2_GL_FALLBACK
+#ifdef V4L2_GL_FALLBACK_ENABLED
 	if (vs->renderer->gl_fallback) {
 		if (vs->renderer->defer_attach) {
 			DBG("%s: set flush damage flag.\n", __func__);
@@ -1491,7 +1487,7 @@ v4l2_renderer_attach(struct weston_surface *es, struct weston_buffer *buffer)
 			      &vs->buffer_destroy_listener);
 	}
 
-#ifdef V4L2_GL_FALLBACK
+#ifdef V4L2_GL_FALLBACK_ENABLED
 	if (vs->renderer->gl_fallback) {
 		if (vs->renderer->defer_attach) {
 			if (!vs->notify_attach)
@@ -1522,17 +1518,17 @@ v4l2_renderer_surface_state_destroy(struct v4l2_surface_state *vs)
 	// TODO: Release any resources associated to the surface here.
 
 	weston_buffer_reference(&vs->buffer_ref, NULL);
-#ifdef V4L2_GL_FALLBACK
+
+#ifdef V4L2_GL_FALLBACK_ENABLED
 	if (vs->surface_type == V4L2_SURFACE_GL_ATTACHED) {
 		vs->surface->compositor->renderer = vs->renderer->gl_renderer;
 		vs->surface->renderer_state = vs->gl_renderer_state;
-	} else {
-#endif
-		vs->surface->renderer_state = NULL;
-		free(vs);
-#ifdef V4L2_GL_FALLBACK
+		return;
 	}
 #endif
+
+	vs->surface->renderer_state = NULL;
+	free(vs);
 }
 
 static void
@@ -1582,7 +1578,7 @@ v4l2_renderer_create_surface(struct weston_surface *surface)
 	wl_signal_add(&vr->destroy_signal,
 		      &vs->renderer_destroy_listener);
 
-#ifdef V4L2_GL_FALLBACK
+#ifdef V4L2_GL_FALLBACK_ENABLED
 	vs->surface_type = V4L2_SURFACE_DEFAULT;
 	vs->notify_attach = -1;
 	if (vr->defer_attach)
@@ -1678,7 +1674,7 @@ v4l2_renderer_import_dmabuf(struct weston_compositor *ec,
 			ZWP_LINUX_BUFFER_PARAMS_V1_FLAGS_INTERLACED |
 			ZWP_LINUX_BUFFER_PARAMS_V1_FLAGS_BOTTOM_FIRST;
 
-#ifdef V4L2_GL_FALLBACK
+#ifdef V4L2_GL_FALLBACK_ENABLED
 	struct v4l2_renderer *renderer = get_renderer(ec);
 	if (renderer->gl_fallback) {
 		return v4l2_gl_import_dmabuf(ec, dmabuf);
@@ -1715,7 +1711,7 @@ v4l2_renderer_init(struct weston_compositor *ec, int drm_fd, char *drm_fn)
 	section = weston_config_get_section(ec->config,
 					    "media-ctl", NULL, NULL);
 	weston_config_section_get_string(section, "device", &device, "/dev/media0");
-#ifdef V4L2_GL_FALLBACK
+#ifdef V4L2_GL_FALLBACK_ENABLED
 	weston_config_section_get_bool(section, "gl-fallback", &renderer->gl_fallback, 0);
 	weston_config_section_get_bool(section, "defer-attach", &renderer->defer_attach, 0);
 #endif
@@ -1782,7 +1778,7 @@ v4l2_renderer_init(struct weston_compositor *ec, int drm_fd, char *drm_fn)
 	renderer->base.destroy = v4l2_renderer_destroy;
 	renderer->base.import_dmabuf = v4l2_renderer_import_dmabuf;
 
-#ifdef V4L2_GL_FALLBACK
+#ifdef V4L2_GL_FALLBACK_ENABLED
 	renderer->device->kms = renderer->kms;
 	renderer->device->drm_fd = drm_fd;
 
@@ -1877,7 +1873,7 @@ v4l2_renderer_output_create(struct weston_output *output, struct v4l2_bo_state *
 		vo->bo[i] = bo_states[i];
 	vo->bo_count = count;
 
-#ifdef V4L2_GL_FALLBACK
+#ifdef V4L2_GL_FALLBACK_ENABLED
 	if ((renderer->gl_fallback) && (v4l2_init_gl_output(output, renderer) < 0)) {
 		// error...
 		weston_log("Can't initialize gl-renderer. Disabling gl-fallback.\n");
@@ -1893,7 +1889,7 @@ v4l2_renderer_output_destroy(struct weston_output *output)
 {
 	struct v4l2_output_state *vo = get_output_state(output);
 
-#ifdef V4L2_GL_FALLBACK
+#ifdef V4L2_GL_FALLBACK_ENABLED
 	struct v4l2_renderer *renderer =
 		(struct v4l2_renderer*)output->compositor->renderer;
 
