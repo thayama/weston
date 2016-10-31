@@ -845,19 +845,17 @@ vsp2_create_output(struct v4l2_renderer_device *dev, int width, int height)
 	return (struct v4l2_renderer_output*)outdev;
 }
 
-static int
-vsp2_dequeue_buffer(int fd, int capture)
+static inline int
+vsp2_dequeue_capture_buffer(int fd)
 {
-	struct v4l2_buffer buf;
-	struct v4l2_plane planes[VIDEO_MAX_PLANES];
-
-	memset(&buf, 0, sizeof buf);
-	buf.type = (capture) ? V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE : V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
-	buf.memory = V4L2_MEMORY_DMABUF;
-	buf.index = 0;
-	buf.m.planes = planes;
-	buf.length = 1;
-	memset(planes, 0, sizeof(planes));
+	struct v4l2_plane planes[VIDEO_MAX_PLANES] = { 0 };
+	struct v4l2_buffer buf = {
+		.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE,
+		.memory = V4L2_MEMORY_DMABUF,
+		.index = 0,
+		.m.planes = planes,
+		.length = 1
+	};
 
 	if (ioctl(fd, VIDIOC_DQBUF, &buf) == -1) {
 		weston_log("VIDIOC_DQBUF failed on %d (%s).\n", fd, strerror(errno));
@@ -867,20 +865,19 @@ vsp2_dequeue_buffer(int fd, int capture)
 	return 0;
 }
 
-static int
-vsp2_queue_buffer(int fd, int capture, struct vsp_surface_state *vs)
+static inline int
+_vsp2_queue_buffer(int fd, enum v4l2_buf_type type, struct vsp_surface_state *vs)
 {
-	struct v4l2_buffer buf;
-	struct v4l2_plane planes[VIDEO_MAX_PLANES];
+	struct v4l2_plane planes[VIDEO_MAX_PLANES] = { 0 };
+	struct v4l2_buffer buf = {
+		.type = type,
+		.memory = V4L2_MEMORY_DMABUF,
+		.index = 0,
+		.m.planes = planes,
+		.length = vs->base.num_planes
+	};
 	int i;
 
-	memset(&buf, 0, sizeof buf);
-	buf.type = (capture) ? V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE : V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
-	buf.memory = V4L2_MEMORY_DMABUF;
-	buf.index = 0;
-	buf.m.planes = planes;
-	buf.length = vs->base.num_planes;
-	memset(planes, 0, sizeof(planes));
 	for (i = 0; i < vs->base.num_planes; i++) {
 		buf.m.planes[i].m.fd = vs->base.planes[i].dmafd;
 		buf.m.planes[i].length = vs->base.planes[i].length;
@@ -893,7 +890,7 @@ vsp2_queue_buffer(int fd, int capture, struct vsp_surface_state *vs)
 		return -1;
 	}
 
-	if (capture) {
+	if (type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
 		for (i = 0; i < vs->base.num_planes; i++) {
 			vs->base.planes[i].length = buf.m.planes[i].length;
 			/* XXX:
@@ -906,8 +903,14 @@ vsp2_queue_buffer(int fd, int capture, struct vsp_surface_state *vs)
 	return 0;
 }
 
+#define vsp2_queue_capture_buffer(fd, vs) \
+	_vsp2_queue_buffer((fd), V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE, (vs))
+
+#define vsp2_queue_output_buffer(fd, vs) \
+	_vsp2_queue_buffer((fd), V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE, (vs))
+
 static inline int
-_vsp2_request_buffer(int fd, int count, enum v4l2_buf_type type)
+_vsp2_request_buffer(int fd, enum v4l2_buf_type type, int count)
 {
 	struct v4l2_requestbuffers reqbuf = {
 		.type = type,
@@ -923,17 +926,11 @@ _vsp2_request_buffer(int fd, int count, enum v4l2_buf_type type)
 	return 0;
 }
 
-static inline int
-vsp2_request_capture_buffer(int fd, int count)
-{
-	return _vsp2_request_buffer(fd, count, V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE);
-}
+#define vsp2_request_capture_buffer(fd, cnt) \
+	_vsp2_request_buffer((fd), V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE, (cnt))
 
-static inline int
-vsp2_request_output_buffer(int fd, int count)
-{
-	return _vsp2_request_buffer(fd, count, V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE);
-}
+#define vsp2_request_output_buffer(fd, cnt) \
+	_vsp2_request_buffer((fd), V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE, (cnt))
 
 static void
 vsp2_comp_begin(struct v4l2_renderer_device *dev, struct v4l2_renderer_output *out)
@@ -1077,7 +1074,7 @@ vsp2_comp_setup_inputs(struct vsp_device *vsp, struct vsp_input *input, bool ena
 		return -1;
 
 	// queue buffer
-	if (vsp2_queue_buffer(rpf->devnode.fd, 0, vs) < 0)
+	if (vsp2_queue_output_buffer(rpf->devnode.fd, vs) < 0)
 		return -1;
 
 	return 0;
@@ -1103,7 +1100,7 @@ vsp2_comp_flush(struct vsp_device *vsp)
 	fd = vsp->wpf->devnode.fd;
 
 	// queue buffer
-	if (vsp2_queue_buffer(fd, 1, vsp->output_surface_state) < 0)
+	if (vsp2_queue_capture_buffer(fd, vsp->output_surface_state) < 0)
 		goto error;
 
 	// stream on
@@ -1121,7 +1118,7 @@ vsp2_comp_flush(struct vsp_device *vsp)
 	}
 
 	// dequeue buffer
-	if (vsp2_dequeue_buffer(fd, 1) < 0)
+	if (vsp2_dequeue_capture_buffer(fd) < 0)
 		goto error;
 
 	type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
@@ -1246,7 +1243,7 @@ vsp2_do_scaling(struct vsp_scaler_device *scaler, struct vsp_input *input,
 	if (vsp2_request_output_buffer(scaler->rpf->devnode.fd, 1) < 0)
 		return -1;
 
-	if (vsp2_queue_buffer(scaler->rpf->devnode.fd, 0, vs) < 0)
+	if (vsp2_queue_output_buffer(scaler->rpf->devnode.fd, vs) < 0)
 		return -1;
 
 	/* queue buffer for output */
@@ -1265,7 +1262,7 @@ vsp2_do_scaling(struct vsp_scaler_device *scaler, struct vsp_input *input,
 	vsp2_request_capture_buffer(scaler->wpf->devnode.fd, 1);
 
 	scaler_vs->base.num_planes = 1;
-	if (vsp2_queue_buffer(scaler->wpf->devnode.fd, 1, scaler_vs) < 0)
+	if (vsp2_queue_capture_buffer(scaler->wpf->devnode.fd, scaler_vs) < 0)
 		return -1;
 
 	/* execute scaling */
@@ -1283,7 +1280,7 @@ vsp2_do_scaling(struct vsp_scaler_device *scaler, struct vsp_input *input,
 		return -1;
 	}
 
-	if (vsp2_dequeue_buffer(scaler->wpf->devnode.fd, 1) < 0)
+	if (vsp2_dequeue_capture_buffer(scaler->wpf->devnode.fd) < 0)
 		return -1;
 
 	type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
