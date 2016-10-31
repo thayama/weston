@@ -56,7 +56,6 @@
 /*
  * Enable scaling with VSPI UDS
  */
-
 // #define VSP2_SCALER_ENABLED
 
 #if 1
@@ -158,6 +157,18 @@ typedef enum {
 	SCALER_TYPE_VSP,
 	SCALER_TYPE_GL,
 } scaler_t;
+
+struct vsp_scaler_device {
+	int media_fd;
+
+	int width;
+	int height;
+	struct vsp_surface_state state;
+
+	struct vsp2_media_entity *rpf;
+	struct vsp2_media_entity *uds;
+	struct vsp2_media_entity *wpf;
+};
 #endif
 
 typedef enum {
@@ -239,7 +250,7 @@ video_is_streaming(__u32 cap)
 }
 
 static void
-vsp2_check_capabiility(int fd, const char *devname)
+vsp2_check_capability(int fd, const char *devname)
 {
 	struct v4l2_capability cap;
 	int ret;
@@ -259,180 +270,78 @@ vsp2_check_capabiility(int fd, const char *devname)
 }
 
 #ifdef VSP2_SCALER_ENABLED
+static int
+vsp2_scan_device_and_reset_links(int fd, struct vsp2_media_entity *entities, int count);
+
 static struct vsp_scaler_device*
 vsp2_scaler_init(struct weston_config_section *section)
 {
-	char *vspi_device;
-	struct media_device *media;
-	struct media_link *link;
-	struct media_entity *entity;
-	const struct media_device_info *info;
-	const char *device_name, *devname;
-	char buf[128], *p, *endp;
-	struct vsp_scaler_device *vspi = NULL;
+	struct vsp_scaler_device *scaler;
+	char *device;
 
-	weston_config_section_get_string(section, "vspi-device", &vspi_device,
-					 "/dev/media6");
+	/* if vspi-device is not set, then we don't enable UDS */
+	weston_config_section_get_string(section, "vspi-device", &device, NULL);
 
-	media = media_device_new(vspi_device);
-	if (!media) {
-		weston_log("Can't create %s.\n", vspi_device);
+	if (!device) {
+		DBG("no vspi-device specified.\n");
+		return NULL;
+	}
+
+	if ((scaler = calloc(1, sizeof *scaler)) == NULL)
+		return NULL;
+
+	weston_log("Using %s as a VSPI.\n", device);
+	scaler->media_fd = open(device, O_RDWR);
+	if (scaler->media_fd < 0) {
+		weston_log("Can't open the device %s.\n", device);
+		free(device);
+		goto error;
+	}
+	free(device);
+
+	/* scan VSPI device */
+	if (vsp2_scan_device_and_reset_links(scaler->media_fd,
+					     vspi_entities, VSPI_ENTITY_MAX) < 0) {
+		weston_log("Device scan and reset failed.\n");
 		goto error;
 	}
 
-	if (media_device_enumerate(media)) {
-		weston_log("Can't enumerate %s.\n", vspi_device);
+	scaler->rpf = &vspi_entities[VSPI_RPF0];
+	scaler->uds = &vspi_entities[VSPI_UDS0];
+	scaler->wpf = &vspi_entities[VSPI_WPF0];
+
+	/* Initialize input */
+	weston_log("Setting up scaler input.\n");
+	scaler->rpf->link.source.entity = scaler->rpf->subdev.entity.id;
+	scaler->rpf->link.sink.entity = scaler->uds->subdev.entity.id;
+	scaler->rpf->link.flags = MEDIA_LNK_FL_ENABLED;
+
+	if (ioctl(scaler->media_fd, MEDIA_IOC_SETUP_LINK, &scaler->rpf->link) < 0) {
+		weston_log("setting a link between uds and wpf failed.\n");
 		goto error;
 	}
 
-	info = media_get_info(media);
-	weston_log("Media device information\n"
-		   "------------------------\n"
-		   "driver              %s\n"
-		   "model               %s\n"
-		   "serial              %s\n"
-		   "bus info            %s\n"
-		   "hw revision         0x%x\n"
-		   "driver version      %u.%u.%u\n",
-		   info->driver, info->model, info->serial,
-		   info->bus_info, info->hw_revision,
-		   (info->driver_version >> 16) & 0xff,
-		   (info->driver_version >>  8) & 0xff,
-		   (info->driver_version)       & 0xff);
+	vsp2_check_capability(scaler->rpf->devnode.fd, scaler->rpf->devnode.entity.name);
 
-	if ((p = strchr(info->bus_info, ':')))
-		device_name = p + 1;
-	else
-		device_name = info->bus_info;
+	/* Initialize scaler */
+	weston_log("Setting up a scaler.\n");
+	scaler->uds->link.source.entity = scaler->uds->subdev.entity.id;
+	scaler->uds->link.sink.entity = scaler->wpf->subdev.entity.id;
+	scaler->uds->link.flags = MEDIA_LNK_FL_ENABLED;
 
-	/*
-	 * TODO: We also need to refactor the code, so that we don't have
-	 * duplication of codes. Especially, these media controller related
-	 * code.
-	 *
-	 * The same issue with the model name as in vsp2_init() applies here. 
-	 */
-	if (strncmp(info->model, "VSP2", 4)) {
-		weston_log("The device is not VSPI.\n");
+	if (ioctl(scaler->media_fd, MEDIA_IOC_SETUP_LINK, &scaler->uds->link) < 0) {
+		weston_log("setting a link between uds and wpf failed.\n");
 		goto error;
 	}
 
-	vspi = calloc(1, sizeof(*vspi));
-	if (!vspi) {
-		weston_log("Can't alloc memory.\n");
-		goto error;
-	}
+	/* output side... nothing to do */
+	vsp2_check_capability(scaler->wpf->devnode.fd, scaler->wpf->devnode.entity.name);
 
-	/* Reset link */
-	if (media_reset_links(media)) {
-		weston_log("Reset media controller links failed.\n");
-		goto error;
-	}
-
-	/* RPF => UDS */
-	weston_log("Setting up input.\n");
-	/* set up link */
-	snprintf(buf, sizeof(buf), vsp_scaler_input_link, device_name,
-		 device_name);
-	weston_log("setting up link: '%s'\n", buf);
-	link = media_parse_link(media, buf, &endp);
-	if (media_setup_link(media, link->source, link->sink, 1)) {
-		weston_log("link set up failed.\n");
-		goto error;
-	}
-	vspi->input.link = link;
-
-	/* RPF input */
-	snprintf(buf, sizeof(buf), vsp_scaler_input_infmt, device_name);
-	weston_log("get an input pad: '%s'\n", buf);
-	if (!(vspi->input.infmt = media_parse_pad(media, buf, NULL))) {
-		weston_log("parse pad failed.\n");
-		goto error;
-	}
-
-	/* RPF output */
-	snprintf(buf, sizeof(buf), vsp_scaler_input_outfmt, device_name);
-	weston_log("get an input sink: '%s'\n", buf);
-	if (!(vspi->input.outfmt = media_parse_pad(media, buf, NULL))) {
-		weston_log("parse pad failed.\n");
-		goto error;
-	}
-
-	/* UDS input */
-	snprintf(buf, sizeof(buf), vsp_scaler_uds_infmt, device_name);
-	weston_log("get a scaler pad: '%s'\n", buf);
-	if (!(vspi->uds.infmt = media_parse_pad(media, buf, NULL))) {
-		weston_log("parse pad failed.\n");
-		goto error;
-	}
-
-	/* get a file descriptor for the input */
-	snprintf(buf, sizeof(buf), vsp_scaler_input, device_name);
-	entity = media_get_entity_by_name(media, buf, strlen(buf));
-	if (!entity) {
-		weston_log("error... '%s' not found.\n", buf);
-		goto error;
-	}
-
-	if (v4l2_subdev_open(entity)) {
-		weston_log("subdev '%s' open failed.\n", buf);
-		goto error;
-	}
-
-	vspi->input.fd = entity->fd;
-	vsp2_check_capabiility(vspi->input.fd,
-			       media_entity_get_devname(entity));
-
-	/* UDS => WPF */
-	weston_log("Setting up an output.\n");
-	/* set up link */
-	snprintf(buf, sizeof(buf), vsp_scaler_output_link, device_name,
-		 device_name);
-	weston_log("setting up link: '%s'\n", buf);
-	link = media_parse_link(media, buf, &endp);
-	if (media_setup_link(media, link->source, link->sink, 1)) {
-		weston_log("link set up failed.\n");
-		goto error;
-	}
-	vspi->uds.link = link;
-
-	/* UDS output */
-	snprintf(buf, sizeof(buf), vsp_scaler_uds_outfmt, device_name);
-	weston_log("get a scaler sink: '%s'\n", buf);
-	if (!(vspi->uds.outfmt = media_parse_pad(media, buf, NULL))) {
-		weston_log("parse pad failed.\n");
-		goto error;
-	}
-
-	/* WPF input */
-	snprintf(buf, sizeof(buf), vsp_scaler_output_fmt, device_name);
-	weston_log("get a output pad: '%s'\n", buf);
-	if (!(vspi->output_fmt = media_parse_pad(media, buf, NULL))) {
-		weston_log("parse pad faild.\n");
-		goto error;
-	}
-
-	snprintf(buf, sizeof(buf), vsp_scaler_output, device_name);
-	entity = media_get_entity_by_name(media, buf, strlen(buf));
-	if (!entity) {
-		weston_log("error... '%s' not found.\n", buf);
-		goto error;
-	}
-
-	devname = media_entity_get_devname(entity);
-	weston_log("output '%s' is associated with '%s'\n", buf, devname);
-	vspi->uds.fd = open(devname, O_RDWR);
-	if (vspi->uds.fd < 0) {
-		weston_log("error... can't open '%s'.\n", devname);
-		goto error;
-	}
-	vsp2_check_capabiility(vspi->uds.fd, devname);
-
-	return vspi;
+	return scaler;
 
 error:
-	if (vspi)
-		free(vspi);
+	if (scaler)
+		free(scaler);
 	weston_log("VSPI device init failed...\n");
 	return NULL;
 }
@@ -588,7 +497,7 @@ vsp2_init(int media_fd, struct media_device_info *info, struct weston_config *co
 		vsp->inputs[i].rpf = rpf;
 
 		/* check capability */
-		vsp2_check_capabiility(rpf->devnode.fd, rpf->devnode.entity.name);
+		vsp2_check_capability(rpf->devnode.fd, rpf->devnode.entity.name);
 	}
 
 	/* Initialize composer */
@@ -633,25 +542,34 @@ vsp2_init(int media_fd, struct media_device_info *info, struct weston_config *co
 	weston_log("Setting up an output.\n");
 
 	/* output is always enabled - immutable */
-	vsp2_check_capabiility(vsp->wpf->devnode.fd, vsp->wpf->devnode.entity.name);
+	vsp2_check_capability(vsp->wpf->devnode.fd, vsp->wpf->devnode.entity.name);
 
 #ifdef VSP2_SCALER_ENABLED
-	vsp->scaler_max = VSP_SCALER_MAX;
-	vsp->scaler_type = SCALER_TYPE_OFF;
+	{
+		char *p;
 
-	weston_config_section_get_string(section, "scaler", &p, "off");
-	if (!strcmp(p, "vsp"))
-	    vsp->scaler_type = SCALER_TYPE_VSP;
-	else if (!strcmp(p, "gl-fallback"))
-	    vsp->scaler_type = SCALER_TYPE_GL;
-	free(p);
+		vsp->scaler_max = VSP_SCALER_MAX;
+		vsp->scaler_type = SCALER_TYPE_OFF;
 
-	if (vsp->max_views_to_compose <= 0 && vsp->scaler_type != SCALER_TYPE_GL)
-		vsp->base.disable_gl_fallback = true;
-	if (vsp->scaler_type == SCALER_TYPE_VSP) {
-		vsp->scaler = vsp2_scaler_init(section);
-		if (!vsp->scaler)
-			vsp->scaler_type = SCALER_TYPE_OFF;
+		weston_config_section_get_string(section, "scaler", &p, "off");
+
+		DBG("scaler setting = '%s'\n", p);
+
+		if (!strcmp(p, "vsp")) {
+			if ((vsp->scaler = vsp2_scaler_init(section)))
+				vsp->scaler_type = SCALER_TYPE_VSP;
+		}
+#  ifdef V4L2_GL_FALLBACK_ENABLED
+		else if (!strcmp(p, "gl-fallback")) {
+			vsp->scaler_type = SCALER_TYPE_GL;
+		}
+
+		/* If we need to scale with gl-renderer, we don't disable fallback */
+		if (vsp->max_views_to_compose <= 0 && vsp->scaler_type != SCALER_TYPE_GL)
+			vsp->base.disable_gl_fallback = true;
+#  endif
+
+		free(p);
 	}
 #endif
 
@@ -824,7 +742,7 @@ vsp2_set_output(struct vsp_device *vsp, struct vsp_renderer_output *out)
 
 #ifdef VSP2_SCALER_ENABLED
 static int
-vsp2_scaler_create_buffer(struct vsp_scaler_device *vspi, int fd,
+vsp2_scaler_create_buffer(struct vsp_scaler_device *scaler, int fd,
 			  struct kms_driver *kms, int width, int height)
 {
 	unsigned attr[] = {
@@ -834,22 +752,24 @@ vsp2_scaler_create_buffer(struct vsp_scaler_device *vspi, int fd,
 		KMS_TERMINATE_PROP_LIST
 	};
 	unsigned int handle, stride;
-	struct vsp_surface_state *vs = &vspi->state;
-	if (vspi->width >= width && vspi->height >= height)
+	struct vsp_surface_state *vs = &scaler->state;
+
+	if (scaler->width >= width && scaler->height >= height)
 		return 0;
 
-	if (vspi->width < width)
-		vspi->width = width;
-	if (vspi->height < height)
-		vspi->height = height;
+	if (scaler->width < width)
+		scaler->width = width;
+	if (scaler->height < height)
+		scaler->height = height;
 
-	if (vs->base.planes[0].dmafd) {
+	if (vs->base.planes[0].dmafd > 0) {
 		close(vs->base.planes[0].dmafd);
+		vs->base.planes[0].dmafd = 0;
 		kms_bo_destroy(&vs->base.bo);
 	}
 
-	attr[3] = ((vspi->width + 31) >> 5) << 5;
-	attr[5] = vspi->height;
+	attr[3] = (scaler->width + 0x1f) & ~0x1f;
+	attr[5] = scaler->height;
 
 	if (kms_bo_create(kms, attr, &vs->base.bo))
 		goto error;
@@ -867,7 +787,7 @@ vsp2_scaler_create_buffer(struct vsp_scaler_device *vspi, int fd,
 	return 0;
 
 error:
-	if (vs->base.planes[0].dmafd)
+	if (vs->base.planes[0].dmafd > 0)
 		close(vs->base.planes[0].dmafd);
 	kms_bo_destroy(&vs->base.bo);
 	return -1;
@@ -986,21 +906,33 @@ vsp2_queue_buffer(int fd, int capture, struct vsp_surface_state *vs)
 	return 0;
 }
 
-static int
-vsp2_request_buffer(int fd, int capture, int count)
+static inline int
+_vsp2_request_buffer(int fd, int count, enum v4l2_buf_type type)
 {
-	struct v4l2_requestbuffers reqbuf;
+	struct v4l2_requestbuffers reqbuf = {
+		.type = type,
+		.memory = V4L2_MEMORY_DMABUF,
+		.count = count
+	};
 
-	memset(&reqbuf, 0, sizeof(reqbuf));
-	reqbuf.type = (capture) ? V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE : V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
-	reqbuf.memory = V4L2_MEMORY_DMABUF;
-	reqbuf.count = count;
 	if (ioctl(fd, VIDIOC_REQBUFS, &reqbuf) == -1) {
 		weston_log("clearing VIDIOC_REQBUFS failed (%s).\n", strerror(errno));
 		return -1;
 	}
 
 	return 0;
+}
+
+static inline int
+vsp2_request_capture_buffer(int fd, int count)
+{
+	return _vsp2_request_buffer(fd, count, V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE);
+}
+
+static inline int
+vsp2_request_output_buffer(int fd, int count)
+{
+	return _vsp2_request_buffer(fd, count, V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE);
 }
 
 static void
@@ -1022,7 +954,7 @@ vsp2_comp_begin(struct v4l2_renderer_device *dev, struct v4l2_renderer_output *o
 	vsp2_set_output(vsp, output);
 
 	// dump the old setting
-	vsp2_request_buffer(vsp->wpf->devnode.fd, 1, 0);
+	vsp2_request_capture_buffer(vsp->wpf->devnode.fd, 0);
 
 	// set format for composition output via wpf.0
 	fmt->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
@@ -1032,7 +964,7 @@ vsp2_comp_begin(struct v4l2_renderer_device *dev, struct v4l2_renderer_output *o
 	fmt->type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
 
 	// we require only one buffer for wpf.0
-	vsp2_request_buffer(vsp->wpf->devnode.fd, 1, 1);
+	vsp2_request_capture_buffer(vsp->wpf->devnode.fd, 1);
 
 	// keep the current setting
 	vsp->current_wpf_fmt = *fmt;
@@ -1133,7 +1065,7 @@ vsp2_comp_setup_inputs(struct vsp_device *vsp, struct vsp_input *input, bool ena
 	}
 
 	// dump the old setting
-	if (vsp2_request_buffer(rpf->devnode.fd, 0, 0) < 0)
+	if (vsp2_request_output_buffer(rpf->devnode.fd, 0) < 0)
 		return -1;
 
 	// set input format
@@ -1141,7 +1073,7 @@ vsp2_comp_setup_inputs(struct vsp_device *vsp, struct vsp_input *input, bool ena
 		return -1;
 
 	// request a buffer
-	if (vsp2_request_buffer(rpf->devnode.fd, 0, 1) < 0)
+	if (vsp2_request_output_buffer(rpf->devnode.fd, 1) < 0)
 		return -1;
 
 	// queue buffer
@@ -1233,132 +1165,138 @@ vsp2_comp_finish(struct v4l2_renderer_device *dev)
 
 #ifdef VSP2_SCALER_ENABLED
 static int
-vsp2_do_scaling(struct vsp_scaler_device *vspi, struct vsp_input *input,
+vsp2_do_scaling(struct vsp_scaler_device *scaler, struct vsp_input *input,
 		struct v4l2_rect *src, struct v4l2_rect *dst)
 {
-	struct v4l2_mbus_framefmt format = { 0 };
-	struct vsp_surface_state *vs = input->input_surface_states;
-	struct vsp_surface_state *scaler_vs = &vspi->state;
+	struct vsp_surface_state *scaler_vs = &scaler->state;
 	struct v4l2_format *fmt = &scaler_vs->fmt;
 	int type;
 
-	/* RPF input format */
-	format.width = vs->base.width;
-	format.height = vs->base.height;
-	format.code = vs->mbus_code;
-	if (v4l2_subdev_set_format(vspi->input.infmt->entity, &format,
-				   vspi->input.infmt->index,
-				   V4L2_SUBDEV_FORMAT_ACTIVE)) {
-		weston_log("set input format via subdev failed.\n");
+	struct vsp_surface_state *vs = input->input_surface_states;
+	struct v4l2_subdev_format subdev_fmt = {
+		.which = V4L2_SUBDEV_FORMAT_ACTIVE
+	};
+	struct v4l2_subdev_selection subdev_sel = {
+		.which = V4L2_SUBDEV_FORMAT_ACTIVE
+	};
+
+	// set size and format for rpf.0:0; the input format
+	subdev_fmt.pad = 0;
+	subdev_fmt.format.width = vs->base.width;
+	subdev_fmt.format.height = vs->base.height;
+	subdev_fmt.format.code = vs->mbus_code;
+
+	if (ioctl(scaler->rpf->subdev.fd, VIDIOC_SUBDEV_S_FMT, &subdev_fmt) < 0) {
+		weston_log("set rpf.0 input format via subdev failed.\n");
 		return -1;
 	}
 
-	if (v4l2_subdev_set_selection(vspi->input.infmt->entity, src,
-				      vspi->input.infmt->index,
-				      V4L2_SEL_TGT_CROP,
-				      V4L2_SUBDEV_FORMAT_ACTIVE)) {
+	// set a crop paramters for the input
+	subdev_sel.pad = 0;
+	subdev_sel.target = V4L2_SEL_TGT_CROP;
+	subdev_sel.r = *src;
+	if (ioctl(scaler->rpf->subdev.fd, VIDIOC_SUBDEV_S_SELECTION, &subdev_sel) < 0) {
 		weston_log("set rcop parameter failed: %dx%d@(%d,%d).\n",
 			   src->width, src->height, src->left, src->top);
 		return -1;
 	}
+	*src = subdev_sel.r;
 
-	/* RPF output format */
-	format.width = src->width;
-	format.height = src->height;
-	format.code = V4L2_MBUS_FMT_ARGB8888_1X32;
-	if (v4l2_subdev_set_format(vspi->input.outfmt->entity, &format,
-				   vspi->input.outfmt->index,
-				   V4L2_SUBDEV_FORMAT_ACTIVE)) {
-		weston_log("set output format via subdev failed.\n");
+	// set rpf.0:1; the output towards UDS.
+	subdev_fmt.pad = 1;
+	subdev_fmt.format.width = src->width;
+	subdev_fmt.format.height = src->height;
+	subdev_fmt.format.code = V4L2_MBUS_FMT_ARGB8888_1X32;
+
+	if (ioctl(scaler->rpf->subdev.fd, VIDIOC_SUBDEV_S_FMT, &subdev_fmt) < 0) {
+		weston_log("set rpf.0 output format via subdev failed.\n");
 		return -1;
 	}
 
-	/* UDS input format */
-	if (v4l2_subdev_set_format(vspi->uds.infmt->entity, &format,
-				   vspi->uds.infmt->index,
-				   V4L2_SUBDEV_FORMAT_ACTIVE)) {
+	// set uds.0:0 to be the same as rpf.0:1
+	subdev_fmt.pad = 0;
+	if (ioctl(scaler->uds->subdev.fd, VIDIOC_SUBDEV_S_FMT, &subdev_fmt) < 0) {
 		weston_log("set input format of UDS via subdev failed.\n");
 		return -1;
 	}
 
-	/* UDS output format */
-	format.width = dst->width;
-	format.height = dst->height;
-	if (v4l2_subdev_set_format(vspi->uds.outfmt->entity, &format,
-				   vspi->uds.outfmt->index,
-				   V4L2_SUBDEV_FORMAT_ACTIVE)) {
+	// uds.0:1 output size; the color format should be the same as the input
+	subdev_fmt.pad = 1;
+	subdev_fmt.format.width = dst->width;
+	subdev_fmt.format.height = dst->height;
+	if (ioctl(scaler->uds->subdev.fd, VIDIOC_SUBDEV_S_FMT, &subdev_fmt) < 0) {
 		weston_log("set output format of UDS via subdev failed.\n");
 		return -1;
 	}
 
-	/* WPF input format */
-	if (v4l2_subdev_set_format(vspi->output_fmt->entity, &format,
-				   vspi->output_fmt->index,
-				   V4L2_SUBDEV_FORMAT_ACTIVE)) {
+	// wpf.0:0 input; same as uds.0:1
+	subdev_fmt.pad = 0;
+	if (ioctl(scaler->wpf->subdev.fd, VIDIOC_SUBDEV_S_FMT, &subdev_fmt) < 0) {
 		weston_log("set input format of WPF via subdev failed.\n");
 		return -1;
 	}
 
 	/* queue buffer for input */
-	if (vsp2_request_buffer(vspi->input.fd, 0, 0) < 0)
+	if (vsp2_request_output_buffer(scaler->rpf->devnode.fd, 0) < 0)
 		return -1;
 
-	if (vsp2_set_format(vspi->input.fd, &vs->fmt, input->opaque))
+	if (vsp2_set_format(scaler->rpf->devnode.fd, &vs->fmt, input->opaque))
 		return -1;
 
-	if (vsp2_request_buffer(vspi->input.fd, 0, 1) < 0)
+	if (vsp2_request_output_buffer(scaler->rpf->devnode.fd, 1) < 0)
 		return -1;
 
-	if (vsp2_queue_buffer(vspi->input.fd, 0, vs) < 0)
+	if (vsp2_queue_buffer(scaler->rpf->devnode.fd, 0, vs) < 0)
 		return -1;
 
 	/* queue buffer for output */
-	vsp2_request_buffer(vspi->uds.fd, 1, 0);
+	vsp2_request_capture_buffer(scaler->wpf->devnode.fd, 0);
 
 	fmt->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
 	fmt->fmt.pix_mp.width = dst->width;
 	fmt->fmt.pix_mp.height = dst->height;
 	fmt->fmt.pix_mp.pixelformat = V4L2_PIX_FMT_ABGR32;
 	fmt->fmt.pix_mp.num_planes = 1;
-	vsp2_set_format(vspi->uds.fd, fmt, 0);
+
+	vsp2_set_format(scaler->wpf->devnode.fd, fmt, 0);
+
 	fmt->type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
-	vsp2_request_buffer(vspi->uds.fd, 1, 1);
+
+	vsp2_request_capture_buffer(scaler->wpf->devnode.fd, 1);
 
 	scaler_vs->base.num_planes = 1;
-	if (vsp2_queue_buffer(vspi->uds.fd, 1, scaler_vs) < 0)
+	if (vsp2_queue_buffer(scaler->wpf->devnode.fd, 1, scaler_vs) < 0)
 		return -1;
 
+	/* execute scaling */
 	type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
-	if (ioctl(vspi->input.fd, VIDIOC_STREAMON, &type) == -1) {
+	if (ioctl(scaler->rpf->devnode.fd, VIDIOC_STREAMON, &type) == -1) {
 		weston_log("VIDIOC_STREAMON failed for scaler input. (%s)\n",
 			   strerror(errno));
 		return -1;
 	}
 
 	type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
-	if (ioctl(vspi->uds.fd, VIDIOC_STREAMON, &type) == -1) {
+	if (ioctl(scaler->wpf->devnode.fd, VIDIOC_STREAMON, &type) == -1) {
 		weston_log("VIDIOC_STREAMON failed for scaler output. (%s)\n",
 			   strerror(errno));
 		return -1;
 	}
 
-	if (vsp2_dequeue_buffer(vspi->uds.fd, 1) < 0)
+	if (vsp2_dequeue_buffer(scaler->wpf->devnode.fd, 1) < 0)
 		return -1;
 
 	type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
-	if (ioctl(vspi->uds.fd, VIDIOC_STREAMOFF, &type) == -1) {
+	if (ioctl(scaler->wpf->devnode.fd, VIDIOC_STREAMOFF, &type) == -1) {
 		weston_log("VIDIOC_STREAMOFF failed for scaler output. (%s)\n",
 			   strerror(errno));
 	}
 
 	type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
-	if (ioctl(vspi->input.fd, VIDIOC_STREAMOFF, &type) == -1) {
+	if (ioctl(scaler->rpf->devnode.fd, VIDIOC_STREAMOFF, &type) == -1) {
 		weston_log("VIDIOC_STREAMOFF failed for scaler input. (%s)\n",
 			   strerror(errno));
 	}
-
-	vsp2_request_buffer(vspi->input.fd, 0, 0);
-	vsp2_request_buffer(vspi->uds.fd, 1, 0);
 
 	scaler_vs->base.width = dst->width;
 	scaler_vs->base.height = dst->height;
@@ -1459,7 +1397,7 @@ vsp2_do_draw_view(struct vsp_device *vsp, struct vsp_surface_state *vs, struct v
 		DBG("We need to use a scaler. (%dx%d)->(%dx%d)\n",
 		    src->width, src->height, dst->width, dst->height);
 
-		// if all scalers are oocupied, flush and then retry.
+		// if all scaler buffers have already been used, we must compose now.
                 if (vsp->scaler_count == vsp->scaler_max) {
 			vsp2_comp_flush(vsp);
 			vsp->scaler_count = 0;
