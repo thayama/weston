@@ -1625,10 +1625,8 @@ debug_binding(struct weston_keyboard *keyboard, uint32_t time, uint32_t key,
 
 	if (vr->repaint_debug) {
 		// TODO: enable repaint debug
-		
 	} else {
 		// TODO: disable repaint debug
-
 		weston_compositor_damage_all(ec);
 	}
 }

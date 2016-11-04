@@ -56,9 +56,9 @@
 /*
  * Enable scaling with VSPI UDS
  */
-// #define VSP2_SCALER_ENABLED
+#define VSP2_SCALER_ENABLED
 
-#if 1
+#if 0
 #define DBG(...) weston_log(__VA_ARGS__)
 #define DBGC(...) weston_log_continue(__VA_ARGS__)
 #else
@@ -449,7 +449,7 @@ vsp2_init(int media_fd, struct media_device_info *info, struct weston_config *co
 	 * VSPI, and VSPD as 'VSP2', but they all have different capabilities. Right now,
 	 * the model name is always 'VSP2'.
 	 */
-	if (strncmp(info->model, "VSP2", 4)) {
+	if (strncmp(info->model, "VSP", 3)) {
 		weston_log("The device is not VSP.");
 		goto error;
 	}
@@ -488,7 +488,7 @@ vsp2_init(int media_fd, struct media_device_info *info, struct weston_config *co
 	weston_log("Setting up inputs. Use %d inputs.\n", vsp->input_max);
 	for (i = 0; i < vsp->input_max; i++) {
 		struct vsp2_media_entity *rpf = &vspb_entities[VSPB_RPF0 + i];
-		
+
 		/* create the link desc */
 		rpf->link.source.entity = rpf->subdev.entity.id;
 		rpf->link.sink.entity = vsp->bru->subdev.entity.id;
@@ -826,18 +826,16 @@ vsp2_create_output(struct v4l2_renderer_device *dev, int width, int height)
 	fmt->fmt.pix_mp.num_planes = 1;
 
 #ifdef VSP2_SCALER_ENABLED
-	{ 
-		struct vsp_device *vsp = (struct vsp_device*)dev;
+	struct vsp_device *vsp = (struct vsp_device*)dev;
 
-		if (vsp->scaler_type == SCALER_TYPE_VSP) {
-			int ret = vsp2_scaler_create_buffer(vsp->scaler,
-							    vsp->base.drm_fd,
-							    vsp->base.kms,
-							    width, height);
-			if (ret) {
-				weston_log("Can't create buffer for scaling. Disabling VSP scaler.\n");
-				vsp->scaler_type = SCALER_TYPE_OFF;
-			}
+	if (vsp->scaler_type == SCALER_TYPE_VSP) {
+		int ret = vsp2_scaler_create_buffer(vsp->scaler,
+						    vsp->base.drm_fd,
+						    vsp->base.kms,
+						    width, height);
+		if (ret) {
+			weston_log("Can't create buffer for scaling. Disabling VSP scaler.\n");
+			vsp->scaler_type = SCALER_TYPE_OFF;
 		}
 	}
 #endif
@@ -1314,11 +1312,6 @@ static int
 vsp2_do_draw_view(struct vsp_device *vsp, struct vsp_surface_state *vs, struct v4l2_rect *src, struct v4l2_rect *dst,
 		 int opaque)
 {
-#ifdef VSP2_SCALER_ENABLED
-	int should_use_scaler = 0;
-#endif
-	struct vsp_input *input;
-
 	if (src->width < 1 || src->height < 1) {
 		DBG("ignoring the size of zeros < (%dx%d)\n", src->width, src->height);
 		return 0;
@@ -1330,6 +1323,8 @@ vsp2_do_draw_view(struct vsp_device *vsp, struct vsp_surface_state *vs, struct v
 	}
 
 #ifdef VSP2_SCALER_ENABLED
+	int should_use_scaler = 0;
+
 	if (vsp->scaler_type == SCALER_TYPE_VSP &&
 	    (dst->width != src->width || dst->height != src->height)) {
 		if (src->width < VSP_SCALER_MIN_PIXELS || src->height < VSP_SCALER_MIN_PIXELS) {
@@ -1380,7 +1375,7 @@ vsp2_do_draw_view(struct vsp_device *vsp, struct vsp_surface_state *vs, struct v
 		return -1;
 	}
 
-	input = &vsp->inputs[vsp->input_count];
+	struct vsp_input *input = &vsp->inputs[vsp->input_count];
 
 	// get an available input pad
 	input->input_surface_states = vs;
