@@ -655,7 +655,7 @@ if test "x$enable_systemd_notify" = "xyes"; then
   PKG_CHECK_MODULES(SYSTEMD_DAEMON, [libsystemd])
 fi
 
-AC_CONFIG_FILES([Makefile src/media-ctl/Makefile src/version.h src/weston.pc])
+AC_CONFIG_FILES([Makefile src/version.h src/weston.pc])
 
 AM_CONDITIONAL([HAVE_GIT_REPO], [test -f $srcdir/.git/logs/HEAD])
 
