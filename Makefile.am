@@ -338,6 +338,17 @@ v4l2_renderer_la_SOURCES =			\
 	libweston/v4l2-renderer.c			\
 	libweston/v4l2-renderer.h			\
 	libweston/v4l2-device.h
+
+libweston_module_LTLIBRARIES += v4l2-vsp2-device.la
+v4l2_vsp2_device_la_LDFLAGS = -module -avoid-version
+v4l2_vsp2_device_la_LIBADD = libweston-@LIBWESTON_MAJOR@.la $(COMPOSITOR_LIBS) $(V4L2_RENDERER_LIBS)
+v4l2_vsp2_device_la_CFLAGS =				\
+	$(COMPOSITOR_CFLAGS)			\
+	$(LIBDRM_CFLAGS)			\
+	$(GCC_CFLAGS)
+v4l2_vsp2_device_la_SOURCES =			\
+	libweston/vsp2-renderer.c			\
+	libweston/v4l2-device.h
 endif
 
 if ENABLE_X11_COMPOSITOR
