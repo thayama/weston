@@ -110,8 +110,8 @@ struct v4l2_renderer {
 	struct wl_signal destroy_signal;
 
 #ifdef V4L2_GL_FALLBACK_ENABLED
-	int gl_fallback;
-	int defer_attach;
+	bool gl_fallback;
+	bool defer_attach;
 	struct gbm_device *gbm;
 	struct weston_renderer *gl_renderer;
 #endif
@@ -417,16 +417,16 @@ v4l2_gl_repaint(struct weston_output *output,
 			continue;
 
 		if (renderer->defer_attach) {
-			if (vs->notify_attach == 1) {
+			if (vs->notify_attach) {
 				DBG("%s: attach gl\n", __func__);
 				v4l2_gl_attach(ev->surface, vs->buffer_ref.buffer);
-				vs->notify_attach = 0;
+				vs->notify_attach = false;
 			}
 			if (vs->flush_damage) {
 				DBG("%s: flush damage\n", __func__);
 				pixman_region32_copy(&ev->surface->damage, &vs->damage);
 				v4l2_gl_flush_damage(ev->surface);
-				vs->flush_damage = 0;
+				vs->flush_damage = false;
 				pixman_region32_clear(&ev->surface->damage);
 			}
 		}
@@ -757,12 +757,13 @@ set_v4l2_rect(pixman_region32_t *region, struct v4l2_rect *rect)
 }
 
 static void
-draw_view(struct weston_view *ev, struct weston_output *output)
+draw_view(struct weston_view *ev, struct weston_output *output, pixman_region32_t *damage)
 {
 	struct v4l2_renderer *renderer = (struct v4l2_renderer*)output->compositor->renderer;
 	struct v4l2_surface_state *vs = get_surface_state(ev->surface);
 	pixman_region32_t dst_region, src_region;
 	pixman_region32_t region, opaque_src_region, opaque_dst_region;
+	pixman_region32_t tmp_region;
 	pixman_transform_t transform;
 
 	if (!vs)
@@ -772,9 +773,11 @@ draw_view(struct weston_view *ev, struct weston_output *output)
 	pixman_region32_init(&region);
 	pixman_region32_intersect(&region,
 				  &ev->transform.boundingbox,
-				  &output->region);
-	pixman_region32_subtract(&region, &region, &ev->clip);
-	if (!pixman_region32_not_empty(&region)) {
+				  damage);
+	pixman_region32_init(&tmp_region);
+	pixman_region32_subtract(&tmp_region, &region, &ev->clip);
+
+	if (!pixman_region32_not_empty(&tmp_region)) {
 		DBG("%s: skipping a view: not visible: view=(%d,%d)-(%d,%d), repaint=(%d,%d)-(%d,%d)\n",
 		    __func__,
 		    ev->transform.boundingbox.extents.x1, ev->transform.boundingbox.extents.y1,
@@ -814,7 +817,9 @@ draw_view(struct weston_view *ev, struct weston_output *output)
 		pixman_transform_invert(&inverse, &transform);
 		transform_region(&inverse, &ev->surface->opaque, &opaque_dst_region);
 
-		pixman_region32_init_rect(&output_region, 0, 0, output->width, output->height);
+		pixman_region32_init(&output_region);
+		pixman_region32_copy(&output_region, damage);
+		region_global_to_output(output, &output_region);
 
 		pixman_region32_intersect(&opaque_dst_region, &opaque_dst_region, &output_region);
 
@@ -872,14 +877,18 @@ repaint_surfaces(struct weston_output *output, pixman_region32_t *damage)
 	struct v4l2_output_state *vo = get_output_state(output);
 	struct v4l2_renderer *renderer = (struct v4l2_renderer*)compositor->renderer;
 	struct weston_view *view;
+	pixman_region32_t damage_extents;
 
 	if (!device_interface->begin_compose(renderer->device, vo->output))
 		return;
 
+	pixman_region32_init_with_extents(&damage_extents,
+					  pixman_region32_extents(damage));
 	wl_list_for_each_reverse(view, &compositor->view_list, link) {
 		if (view->plane == &compositor->primary_plane)
-			draw_view(view, output);
+			draw_view(view, output, &damage_extents);
 	}
+	pixman_region32_fini(&damage_extents);
 
 	device_interface->finish_compose(renderer->device);
 }
@@ -1012,7 +1021,7 @@ v4l2_renderer_flush_damage(struct weston_surface *surface)
 	if (vs->renderer->gl_fallback) {
 		if (vs->renderer->defer_attach) {
 			DBG("%s: set flush damage flag.\n", __func__);
-			vs->flush_damage = 1;
+			vs->flush_damage = true;
 			pixman_region32_copy(&vs->damage, &surface->damage);
 		} else {
 			v4l2_gl_flush_damage(surface);
@@ -1632,7 +1641,7 @@ v4l2_renderer_attach(struct weston_surface *es, struct weston_buffer *buffer)
 		if (vs->renderer->defer_attach) {
 			if (!vs->notify_attach)
 				v4l2_gl_attach(es, NULL);
-			vs->notify_attach = 1;
+			vs->notify_attach = true;
 		} else {
 			v4l2_gl_attach(es, buffer);
 		}
@@ -1721,7 +1730,7 @@ v4l2_renderer_create_surface(struct weston_surface *surface)
 
 #ifdef V4L2_GL_FALLBACK_ENABLED
 	vs->surface_type = V4L2_SURFACE_DEFAULT;
-	vs->notify_attach = -1;
+	vs->notify_attach = false;
 	if (vr->defer_attach)
 		pixman_region32_init(&vs->damage);
 #endif
@@ -2006,7 +2015,7 @@ v4l2_renderer_output_create(struct weston_output *output, struct v4l2_bo_state *
 	if ((renderer->gl_fallback) && (v4l2_init_gl_output(output, renderer) < 0)) {
 		// error...
 		weston_log("Can't initialize gl-renderer. Disabling gl-fallback.\n");
-		renderer->gl_fallback = 0;
+		renderer->gl_fallback = false;
 	}
 #endif
 

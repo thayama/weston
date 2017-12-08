@@ -26,6 +26,9 @@
  *	Takanari Hayama <taki@igel.co.jp>
  */
 
+#ifndef V4L2_RENDERER_DEVICE_H
+#define V4L2_RENDERER_DEVICE_H
+
 #include "config.h"
 
 #include "compositor.h"
@@ -117,8 +120,8 @@ struct v4l2_surface_state {
 
 	v4l2_surface_t surface_type;
 	v4l2_renderer_state_t state_type;
-	int notify_attach;
-	int flush_damage;
+	bool notify_attach;
+	bool flush_damage;
 	pixman_region32_t damage;
 
 	struct wl_listener surface_post_destroy_listener;
@@ -145,3 +148,5 @@ struct v4l2_device_interface {
 	uint32_t (*get_capabilities)(void);
 	bool (*check_format)(uint32_t color_format, int num_planes);
 };
+
+#endif /* !V4L2_RENDERER_DEVICE_H */
