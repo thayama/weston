@@ -486,7 +486,7 @@ v4l2_renderer_read_pixels(struct weston_output *output,
 	struct v4l2_output_state *vo = get_output_state(output);
 	struct v4l2_bo_state *bo = &vo->bo[vo->bo_index];
 	uint32_t v, len = width * 4U;
-	void *src, *dst;
+	uint8_t *src, *dst;
 
 	switch(format) {
 	case PIXMAN_a8r8g8b8:
@@ -519,7 +519,7 @@ v4l2_renderer_read_pixels(struct weston_output *output,
 		return 0;
 	}
 
-	src = bo->map + x * 4 + y * bo->stride;
+	src = bo->map + x * 4U + y * bo->stride;
 	dst = pixels;
 	for (v = 0; v < height; v++) {
 		memcpy(dst, src, len);
@@ -1085,7 +1085,7 @@ v4l2_renderer_repaint_output(struct weston_output *output,
 static inline void
 v4l2_renderer_copy_buffer(struct v4l2_surface_state *vs, struct weston_buffer *buffer)
 {
-	void *src = wl_shm_buffer_get_data(buffer->shm_buffer);
+	uint8_t *src = (uint8_t *)wl_shm_buffer_get_data(buffer->shm_buffer);
 
 	wl_shm_buffer_begin_access(buffer->shm_buffer);
 	for (int i = 0; i < vs->num_planes; i++) {
@@ -1224,7 +1224,7 @@ v4l2_renderer_attach_shm(struct v4l2_surface_state *vs, struct weston_buffer *bu
 		num_planes = 3;
 
 		// No odd sizes are expected
-		uv_stride = stride / 2;
+		uv_stride = stride / 2U;
 		bo_width[0] = ((unsigned int)width + 2U) / 4U;
 		bo_width[1] = (bo_width[0] + 1U) / 2U;
 
