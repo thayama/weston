@@ -1671,6 +1671,12 @@ v4l2_renderer_attach(struct weston_surface *es, struct weston_buffer *buffer)
 			weston_buffer_reference(&vs->buffer_ref, NULL);
 			return;
 		}
+	} else {
+		// null buffer is a special case: current buffer needs to be
+		// released, so reference counter of the attached
+		// dma buffer is dropped from us now
+		v4l2_release_dmabuf(vs);
+		v4l2_release_kms_bo(vs);
 	}
 
 #ifdef V4L2_GL_FALLBACK_ENABLED
