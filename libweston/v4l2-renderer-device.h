@@ -143,6 +143,10 @@ struct v4l2_device_interface {
 	uint32_t (*get_capabilities)(void);
 	bool (*check_format)(uint32_t color_format, int num_planes);
 	void (*query_formats)(struct v4l2_renderer_device *dev, int **formats, int *num_formats);
+	int (*surface_copy_content)(struct v4l2_renderer_device *dev,
+				    struct v4l2_surface_state *surface_state,
+				    void *target, int src_x, int src_y,
+				    int width, int height);
 };
 
 #endif /* !V4L2_RENDERER_DEVICE_H */

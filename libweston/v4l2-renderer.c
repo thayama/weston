@@ -40,6 +40,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/mman.h>
 
 #include <linux/videodev2.h>
 #include <linux/v4l2-subdev.h>
@@ -467,6 +468,26 @@ v4l2_gl_query_dmabuf_formats(struct weston_compositor *ec, int **formats,
 	ec->renderer = renderer->gl_renderer;
 	renderer->gl_renderer->query_dmabuf_formats(ec, formats, num_formats);
 	ec->renderer = &renderer->base;
+}
+
+static int
+v4l2_gl_surface_copy_content(struct weston_surface *surface, void *target,
+			     size_t size, int src_x, int src_y,
+			     int width, int height)
+{
+	struct v4l2_surface_state *vs = get_surface_state(surface);
+	struct v4l2_renderer *renderer = vs->renderer;
+	int ret;
+
+	surface->compositor->renderer = renderer->gl_renderer;
+	surface->renderer_state = vs->gl_renderer_state;
+	ret = renderer->gl_renderer->surface_copy_content(surface, target,
+							  size, src_x, src_y,
+							  width, height);
+	surface->renderer_state = vs;
+	surface->compositor->renderer = &renderer->base;
+
+	return ret;
 }
 #endif
 
@@ -1794,6 +1815,170 @@ v4l2_renderer_destroy(struct weston_compositor *ec)
 }
 
 static void
+v4l2_renderer_surface_get_content_size(struct weston_surface *surface,
+				       int *width, int *height)
+{
+	struct v4l2_surface_state *vs = get_surface_state(surface);
+
+	if ((vs) && (vs->buffer_ref.buffer)) {
+		*width = vs->width;
+		*height = vs->height;
+	} else {
+		*width = *height = 0;
+	}
+}
+
+static void *
+v4l2_renderer_map_buffer(struct v4l2_surface_state *vs)
+{
+	void *addr;
+	if (vs->num_planes == 1) {
+		addr = mmap(NULL, vs->planes[0].length, PROT_READ, MAP_SHARED,
+			    vs->planes[0].dmafd, 0);
+		return (addr != MAP_FAILED) ? addr : NULL;
+	}
+
+	int i, offset = 0;
+	int size = vs->planes[0].length + vs->planes[1].length;
+	if (vs->num_planes == 3)
+		size += vs->planes[2].length;
+	addr = malloc(size);
+	if (!addr)
+		return NULL;
+	for (i = 0; i < vs->num_planes; i++) {
+		void *map = mmap(NULL, vs->planes[i].length, PROT_READ, MAP_SHARED,
+				 vs->planes[i].dmafd, 0);
+		if (map == MAP_FAILED) {
+			free(addr);
+			return NULL;
+		}
+		memcpy(addr + offset, map, vs->planes[i].length);
+		munmap(map, vs->planes[i].length);
+		offset += vs->planes[i].length;
+	}
+	return addr;
+}
+
+static void
+v4l2_renderer_unmap_buffer(struct v4l2_surface_state *vs, void *addr)
+{
+	if (!addr)
+		return;
+
+	if (vs->num_planes == 1)
+		munmap(addr, vs->planes[0].length);
+	else
+		free(addr);
+}
+
+static int
+v4l2_renderer_surface_copy_content_pixman(struct v4l2_surface_state *vs,
+				   void *target, int src_x, int src_y,
+				   int width, int height)
+{
+	pixman_format_code_t pixman_format;
+	pixman_image_t *src_img, *dst_img;
+	void *addr;
+
+	switch(vs->pixel_format) {
+	case V4L2_PIX_FMT_XBGR32:
+		pixman_format = PIXMAN_x8r8g8b8;
+		break;
+	case V4L2_PIX_FMT_ABGR32:
+		pixman_format = PIXMAN_a8r8g8b8;
+		break;
+	case V4L2_PIX_FMT_XRGB32:
+		pixman_format = PIXMAN_b8g8r8x8;
+		break;
+	case V4L2_PIX_FMT_ARGB32:
+		pixman_format = PIXMAN_b8g8r8a8;
+		break;
+	case V4L2_PIX_FMT_RGB24:
+		pixman_format = PIXMAN_r8g8b8;
+		break;
+	case V4L2_PIX_FMT_BGR24:
+		pixman_format = PIXMAN_b8g8r8;
+		break;
+	case V4L2_PIX_FMT_RGB565:
+		pixman_format = PIXMAN_r5g6b5;
+		break;
+	case V4L2_PIX_FMT_RGB332:
+		pixman_format = PIXMAN_r3g3b2;
+		break;
+	case V4L2_PIX_FMT_YUYV:
+		pixman_format = PIXMAN_yuy2;
+		break;
+	case V4L2_PIX_FMT_YVU420M:
+		pixman_format = PIXMAN_yv12;
+		if (vs->width % 4) {
+			DBG("%s: unsupported surface size.\n", __func__);
+			return -1;
+		}
+		break;
+	default:
+		DBG("%s: unsupported buffer format.\n", __func__);
+		return -1;
+	}
+
+	addr = v4l2_renderer_map_buffer(vs);
+	if (!addr) {
+		DBG("%s: map buffer failed.\n", __func__);
+		return -1;
+	}
+
+	src_img = pixman_image_create_bits(pixman_format, vs->width, vs->height,
+					  addr, vs->planes[0].stride);
+	dst_img = pixman_image_create_bits(PIXMAN_a8b8g8r8, width, height,
+					   target, width * 4);
+	pixman_image_set_transform(src_img, NULL);
+	pixman_image_composite32(PIXMAN_OP_SRC, src_img, NULL, dst_img,
+				 src_x, src_y, 0, 0, 0, 0, width, height);
+	pixman_image_unref(src_img);
+	pixman_image_unref(dst_img);
+
+	v4l2_renderer_unmap_buffer(vs, addr);
+	return 0;
+}
+
+static int
+v4l2_renderer_surface_copy_content(struct weston_surface *surface,
+				   void *target, size_t size,
+				   int src_x, int src_y,
+				   int width, int height)
+{
+	struct v4l2_surface_state *vs = get_surface_state(surface);
+
+	if (!vs)
+		return -1;
+
+	if (!vs->buffer_ref.buffer)
+		return -1;
+
+#ifdef V4L2_GL_FALLBACK_ENABLED
+	if (vs->renderer->gl_fallback) {
+		if (vs->renderer->defer_attach)
+			v4l2_gl_attach(surface, vs->buffer_ref.buffer);
+		return v4l2_gl_surface_copy_content(surface, target, size,
+						    src_x, src_y,
+						    width, height);
+	}
+#endif
+
+	if (device_interface->surface_copy_content) {
+		if (device_interface->surface_copy_content(vs->renderer->device,
+							   vs, target,
+							   src_x, src_y,
+							   width, height) == 0)
+			return 0;
+	}
+
+	DBG("%s: fallback to pixman\n", __func__);
+	return v4l2_renderer_surface_copy_content_pixman(vs, target,
+							 src_x, src_y,
+							 width, height);
+}
+
+static void
 debug_binding(struct weston_keyboard *keyboard, const struct timespec *time,
 	      uint32_t key, void *data)
 {
@@ -1967,6 +2152,10 @@ v4l2_renderer_init(struct weston_compositor *ec, struct v4l2_renderer_config *co
 	renderer->base.attach = v4l2_renderer_attach;
 	renderer->base.surface_set_color = v4l2_renderer_surface_set_color;
 	renderer->base.destroy = v4l2_renderer_destroy;
+	renderer->base.surface_get_content_size =
+		v4l2_renderer_surface_get_content_size;
+	renderer->base.surface_copy_content =
+		v4l2_renderer_surface_copy_content;
 	renderer->base.import_dmabuf = v4l2_renderer_import_dmabuf;
 	renderer->base.query_dmabuf_formats = v4l2_renderer_query_dmabuf_formats;
 	renderer->base.query_dmabuf_modifiers = v4l2_renderer_query_dmabuf_modifiers;
