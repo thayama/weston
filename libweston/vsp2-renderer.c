@@ -41,6 +41,7 @@
 #include <sys/stat.h>
 #include <sys/ioctl.h>
 #include <fcntl.h>
+#include <sys/mman.h>
 
 #include <linux/videodev2.h>
 #include <linux/v4l2-subdev.h>
@@ -807,7 +808,6 @@ vsp2_set_format(int fd, struct v4l2_format *fmt, int opaque)
 	    fmt->fmt.pix_mp.width, fmt->fmt.pix_mp.height, fmt->fmt.pix_mp.plane_fmt[0].bytesperline,
 	    fmt->fmt.pix_mp.field,
 	    fmt->fmt.pix_mp.plane_fmt[0].sizeimage);
-
 	fmt->fmt.pix_mp.pixelformat = original_pixelformat;
 
 	if (ret == -1) {
@@ -1743,6 +1743,163 @@ vsp2_query_formats(struct v4l2_renderer_device *dev, int **formats, int *num_for
 	*num_formats = vsp->num_support_formats;
 }
 
+static int
+vsp2_surface_copy_content(struct v4l2_renderer_device *dev,
+			  struct v4l2_surface_state *surface_state,
+			  void *target, int src_x, int src_y,
+			  int width, int height)
+{
+	struct vsp_surface_state *vs = (struct vsp_surface_state*)surface_state;
+
+	if (width < (int)vs->min_width || height < (int)vs->min_height) {
+		DBG("%s: invalid size %dx%d\n", __func__, width, height);
+		return -1;
+	}
+
+	int ret = -1;
+	struct vsp_device *vsp = (struct vsp_device*)dev;
+
+	/* create buffer */
+	struct kms_bo *bo;
+	unsigned int attr[] = {
+		KMS_BO_TYPE, KMS_BO_TYPE_SCANOUT_X8R8G8B8,
+		KMS_WIDTH, width,
+		KMS_HEIGHT, height,
+		KMS_TERMINATE_PROP_LIST
+	};
+	unsigned int stride;
+	unsigned int handle;
+	int dmafd = -1;
+	void *addr = NULL;
+
+	if (kms_bo_create(vsp->base.kms, attr, &bo)) {
+		DBG("%s: create bo failed\n", __func__);
+		return -1;
+	}
+	if (kms_bo_get_prop(bo, KMS_PITCH, &stride)) {
+		DBG("%s: get pitch of bo failed\n", __func__);
+		goto out;
+	}
+	if (kms_bo_get_prop(bo, KMS_HANDLE, &handle)) {
+		DBG("%s: get handle of bo failed\n", __func__);
+		goto out;
+	}
+	if (drmPrimeHandleToFD(vsp->base.drm_fd, handle, DRM_CLOEXEC, &dmafd)) {
+		DBG("%s: get dmafd of bo failed\n", __func__);
+		goto out;
+	}
+	if (kms_bo_map(bo, &addr)) {
+		DBG("%s: map bo failed\n", __func__);
+		goto out;
+	}
+
+	/* setup input and output */
+	struct vsp_surface_state out_vs = {
+		.base = {
+			.num_planes = 1,
+			.planes[0] = {
+				.dmafd = dmafd,
+				.length = stride * height,
+			},
+			.width = width,
+			.height = height,
+		}
+	};
+	struct v4l2_format fmt = {
+		.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE,
+		.fmt.pix_mp = {
+			.width = width,
+			.height = height,
+			.pixelformat = V4L2_PIX_FMT_ABGR32,
+			.num_planes = 1
+		}
+	};
+	struct v4l2_rect src_rect = {src_x, src_y, width, height};
+	struct v4l2_rect dst_rect = {0, 0, width, height};
+	int i;
+
+	if (vsp2_request_capture_buffer(vsp->wpf->devnode.fd, 0)) {
+		DBG("%s: request capture buffer(0) failed\n", __func__);
+		goto out;
+	}
+
+	if (vsp2_set_format(vsp->wpf->devnode.fd, &fmt, 0)) {
+		DBG("%s: set format failed\n", __func__);
+		goto out;
+	}
+	vsp->current_wpf_fmt = fmt;
+	if (vsp2_request_capture_buffer(vsp->wpf->devnode.fd, 1)) {
+		DBG("%s: request capture buffer(1) failed\n", __func__);
+		goto out;
+	}
+
+	if (vsp2_set_output(vsp, &out_vs.base, &dst_rect))
+		goto out;
+
+	vsp->inputs[0].input_surface_states = vs;
+	vsp->inputs[0].src = src_rect;
+	vsp->inputs[0].dst = dst_rect;
+	vsp->inputs[0].opaque = 0;
+
+	if (vsp2_comp_setup_inputs(vsp, &vsp->inputs[0], true)) {
+		DBG("%s: setup inputs (enable) failed\n", __func__);
+		goto out;
+	}
+	for (i = 1; i < vsp->input_max; i++) {
+		if (vsp2_comp_setup_inputs(vsp, &vsp->inputs[i], false)) {
+			DBG("%s: setup inputs (disable) failed\n", __func__);
+			goto out;
+		}
+	}
+
+	if (vsp2_queue_capture_buffer(vsp->wpf->devnode.fd, &out_vs) < 0) {
+		DBG("%s: queue capture buffer for output failed\n", __func__);
+		goto out;
+	}
+
+	/* stream on */
+	int type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	if (ioctl(vsp->inputs[0].rpf->devnode.fd, VIDIOC_STREAMON, &type) == -1) {
+		DBG("%s: stream on for input failed\n", __func__);
+		goto out;
+	}
+	type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	if (ioctl(vsp->wpf->devnode.fd, VIDIOC_STREAMON, &type) == -1) {
+		DBG("%s: stream on for output failed\n", __func__);
+		goto stream_off;
+	}
+
+	/* capture and copy */
+	if (vsp2_dequeue_capture_buffer(vsp->wpf->devnode.fd) < 0) {
+		DBG("%s: dequeue failed\n", __func__);
+		goto stream_off;
+	}
+
+	memcpy(target, addr, width * height * 4);
+	ret = 0;
+
+stream_off:
+	/* stream off */
+	type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	if (ioctl(vsp->wpf->devnode.fd, VIDIOC_STREAMOFF, &type) == -1)
+		DBG("%s: Warning: STREAMOFF failed\n", __func__);
+
+	type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	if (ioctl(vsp->inputs[0].rpf->devnode.fd, VIDIOC_STREAMOFF, &type) == -1)
+		DBG("%s: Warning: STREAMOFF failed for input 0\n",
+			   __func__);
+
+out:
+	/* release buffer */
+	if ((addr) && (kms_bo_unmap(bo)))
+			DBG("%s: kms_bo_unmap failed.\n", __func__);
+	if (dmafd >= 0)
+		close(dmafd);
+	kms_bo_destroy(&bo);
+
+	return ret;
+}
+
 WL_EXPORT struct v4l2_device_interface v4l2_device_interface = {
 	.init = vsp2_init,
 	.destroy = vsp2_destroy,
@@ -1764,4 +1921,5 @@ WL_EXPORT struct v4l2_device_interface v4l2_device_interface = {
 	.get_capabilities = vsp2_get_capabilities,
 	.check_format = vsp2_check_format,
 	.query_formats = vsp2_query_formats,
+	.surface_copy_content = vsp2_surface_copy_content,
 };
