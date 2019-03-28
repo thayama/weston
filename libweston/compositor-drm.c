@@ -4933,6 +4933,18 @@ static void
 drm_output_fini_v4l2(struct drm_output *output)
 {
 	unsigned int i;
+	struct drm_backend *b = to_drm_backend(output->base.compositor);
+
+	/* Destroying the v4l2-renderer surface will destroy all our buffers,
+	 * regardless of refcount. Ensure we destroy them here. */
+	if ((!b->shutting_down) &&
+	    (output->scanout_plane->state_cur->fb) &&
+	    (output->scanout_plane->state_cur->fb->type == BUFFER_PIXMAN_DUMB)) {
+		drm_plane_state_free(output->scanout_plane->state_cur, true);
+		output->scanout_plane->state_cur =
+			drm_plane_state_alloc(NULL, output->scanout_plane);
+		output->scanout_plane->state_cur->complete = true;
+	}
 
 	v4l2_renderer->output_destroy(&output->base);
 
