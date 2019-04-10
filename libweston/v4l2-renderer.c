@@ -2160,11 +2160,10 @@ v4l2_renderer_init(struct weston_compositor *ec, struct v4l2_renderer_config *co
 	renderer->base.query_dmabuf_formats = v4l2_renderer_query_dmabuf_formats;
 	renderer->base.query_dmabuf_modifiers = v4l2_renderer_query_dmabuf_modifiers;
 
-#if defined(V4L2_GL_FALLBACK_ENABLED) || defined(VSP2_SCALER_ENABLED)
 	renderer->device->kms = renderer->kms;
 	renderer->device->drm_fd = drm_fd;
 
-#  ifdef V4L2_GL_FALLBACK_ENABLED
+#ifdef V4L2_GL_FALLBACK_ENABLED
 	if (renderer->gl_fallback) {
 		/* we now initialize gl-renderer for fallback */
 		renderer->gbm = gbm;
@@ -2173,7 +2172,6 @@ v4l2_renderer_init(struct weston_compositor *ec, struct v4l2_renderer_config *co
 			renderer->gbm = NULL;
 		}
 	}
-#  endif
 #endif
 
 	ec->renderer = &renderer->base;

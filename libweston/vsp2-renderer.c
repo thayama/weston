@@ -50,12 +50,9 @@
 
 #include "shared/helpers.h"
 
-#if defined(V4L2_GL_FALLBACK_ENABLED) || defined(VSP2_SCALER_ENABLED)
 #include <unistd.h>
 #include <xf86drm.h>
 #include <libkms/libkms.h>
-#endif
-
 #include <drm_fourcc.h>
 
 #if 0
