@@ -150,10 +150,10 @@ if test x$enable_egl = xyes; then
 	AC_CHECK_HEADERS([linux/sync_file.h])
 fi
 
-AC_ARG_ENABLE(v4l2, [  --disable-v4l2],,
-              enable_v4l2=yes)
-AC_ARG_ENABLE(v4l2-gl-fallback, [  --disable-v4l2-gl-fallback],,
-              enable_v4l2_gl_fallback=yes)
+AC_ARG_ENABLE(v4l2, [  --enable-v4l2],,
+              enable_v4l2=no)
+AC_ARG_ENABLE(v4l2-gl-fallback, [  --enable-v4l2-gl-fallback],,
+              enable_v4l2_gl_fallback=no)
 AC_ARG_ENABLE(vsp2_scaler, [  --enable-vsp2-scaler,],,
               enable_vsp2_scaler=no)
 AM_CONDITIONAL(ENABLE_V4L2, test x$enable_v4l2 = xyes)
