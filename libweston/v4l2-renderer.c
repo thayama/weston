@@ -1493,6 +1493,7 @@ attach_linux_dmabuf_buffer(struct v4l2_surface_state *vs, struct weston_buffer *
 		vs->planes[i].stride = dmabuf->attributes.stride[i];
 		vs->planes[i].length = vs->planes[i].stride *
 				v4l2_renderer_plane_height(i, vs->height, vs->pixel_format);
+		vs->planes[i].offset = dmabuf->attributes.offset[i];
 	}
 
 	DBG("%s: %dx%d buffer attached (dmabuf=%d, stride=%d).\n", __func__,

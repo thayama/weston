@@ -957,6 +957,7 @@ vsp2_queue_buffer(int fd, enum v4l2_buf_type type, struct vsp_surface_state *vs)
 		buf.m.planes[i].m.fd = vs->base.planes[i].dmafd;
 		buf.m.planes[i].length = vs->base.planes[i].length;
 		buf.m.planes[i].bytesused = vs->base.planes[i].length;
+		buf.m.planes[i].data_offset = vs->base.planes[i].offset;
 	}
 
 	if (ioctl(fd, VIDIOC_QBUF, &buf) == -1) {
