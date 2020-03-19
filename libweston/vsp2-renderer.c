@@ -744,6 +744,40 @@ vsp2_attach_buffer(struct v4l2_surface_state *surface_state)
 }
 
 static int
+vsp2_comp_setup_inputs(struct vsp_device *vsp, struct vsp_input *input, bool enable);
+
+static void
+vsp2_detach_buffer(struct v4l2_renderer_device *dev, struct v4l2_surface_state *surface_state)
+{
+	struct vsp_surface_state *vs = (struct vsp_surface_state*)surface_state;
+	struct vsp_device *vsp = (struct vsp_device*)dev;
+	int i;
+
+	if (vsp->state != VSP_STATE_IDLE)
+		return;
+
+	for (i = 0; i < vsp->input_max; i++) {
+		struct vsp_input *input = &vsp->inputs[i];
+
+		/* Find input pad corresponding to that surface */
+		if (input->input_surface_states == vs) {
+			/*
+			 * Disable input pad in order to "dump the old setting". The main
+			 * reason of that action is to request outbut buffer by issuing
+			 * VIDIOC_REQBUFS ioctl with buffer count 0), to drop reference
+			 * counter of the attached dma buffer and release it completely.
+			 * It is going to be safe as such buffer is requested to be released
+			 * and all references to it have been already dropped (except
+			 * last one here).
+			 */
+			DBG("Disable input %d to release attached dma buffer\n", i);
+			vsp2_comp_setup_inputs(vsp, input, false);
+			return;
+		}
+	}
+}
+
+static int
 vsp2_set_format(int fd, struct v4l2_format *fmt, int opaque)
 {
 	int ret;
@@ -1907,6 +1941,7 @@ WL_EXPORT struct v4l2_device_interface v4l2_device_interface = {
 
 	.create_surface = vsp2_create_surface,
 	.attach_buffer = vsp2_attach_buffer,
+	.detach_buffer = vsp2_detach_buffer,
 
 	.begin_compose = vsp2_comp_begin,
 	.finish_compose = vsp2_comp_finish,

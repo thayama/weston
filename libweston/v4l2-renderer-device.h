@@ -131,6 +131,7 @@ struct v4l2_device_interface {
 
 	struct v4l2_surface_state *(*create_surface)(struct v4l2_renderer_device *dev);
 	int (*attach_buffer)(struct v4l2_surface_state *vs);
+	void (*detach_buffer)(struct v4l2_renderer_device *dev, struct v4l2_surface_state *vs);
 
 	bool (*begin_compose)(struct v4l2_renderer_device *dev, struct v4l2_renderer_output *out);
 	void (*finish_compose)(struct v4l2_renderer_device *dev);
