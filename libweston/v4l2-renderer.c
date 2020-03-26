@@ -1689,7 +1689,11 @@ v4l2_renderer_attach(struct weston_surface *es, struct weston_buffer *buffer)
 	} else {
 		// null buffer is a special case: current buffer needs to be
 		// released, so reference counter of the attached
-		// dma buffer is dropped from us now
+		// dma buffer is dropped from us now,
+		// also we ask renderer backend device to completely release
+		// the attached dma buffer if it is still in use
+
+		device_interface->detach_buffer(vs->renderer->device, vs);
 		v4l2_release_dmabuf(vs);
 		v4l2_release_kms_bo(vs);
 	}
